@@ -11,8 +11,6 @@ from openai import OpenAI
 
 # --- Environment & OpenAI client ---
 
-# --- Environment & OpenAI client ---
-
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -21,6 +19,7 @@ if not OPENAI_API_KEY and "OPENAI_API_KEY" in st.secrets:
 
 OPENAI_MODEL_NAME = os.getenv("OPENAI_MODEL_NAME", "gpt-4.1-mini")
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
 # --- Business rules you defined ---
 
 COUNTABLE_STATUSES = [
