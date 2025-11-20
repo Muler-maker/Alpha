@@ -13,12 +13,13 @@ from openai import OpenAI
 
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY and "OPENAI_API_KEY" in st.secrets:
-    OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+# Try environment variable first (works on your laptop),
+# then fall back to Streamlit secrets (works on Streamlit Cloud).
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
 
 OPENAI_MODEL_NAME = os.getenv("OPENAI_MODEL_NAME", "gpt-4.1-mini")
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
 
 # --- Business rules you defined ---
 
