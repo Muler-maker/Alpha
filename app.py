@@ -212,6 +212,7 @@ def main():
 
     # Always show header
     render_header()
+    st.caption(f"GPT client active: {client is not None}")
 
     # -------- AUTH --------
     if APP_PASSWORD and not st.session_state.authenticated:
