@@ -1,5 +1,5 @@
 import os
-
+import json
 import streamlit as st
 import pandas as pd
 import gspread
@@ -9,17 +9,15 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 
-
 def get_credentials():
-    # Streamlit Cloud: use the table stored in st.secrets["gcp_service_account"]
+    # Streamlit Cloud: JSON string stored in secrets
     if "gcp_service_account" in st.secrets:
-        info = dict(st.secrets["gcp_service_account"])
+        info = json.loads(st.secrets["gcp_service_account"])
         return Credentials.from_service_account_info(info, scopes=SCOPES)
 
-    # Local dev: use credentials.json file
+    # Local: fall back to credentials.json
     service_account_file = os.path.join(SCRIPT_DIR, "credentials.json")
     return Credentials.from_service_account_file(service_account_file, scopes=SCOPES)
-
 
 creds = get_credentials()
 gc = gspread.authorize(creds)
