@@ -5,7 +5,7 @@ import copy
 from typing import Dict, Any, List, Optional, Tuple
 
 import pandas as pd
-import streamlit as st
+import streamlit as st      # ← ADD THIS
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -13,12 +13,15 @@ from openai import OpenAI
 
 load_dotenv()
 
-# Try environment variable first (works on your laptop),
-# then fall back to Streamlit secrets (works on Streamlit Cloud).
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
+OPENAI_API_KEY = (
+    os.getenv("OPENAI_API_KEY")
+    or st.secrets.get("OPENAI_API_KEY")   # ← read from Streamlit secrets too
+)
 
 OPENAI_MODEL_NAME = os.getenv("OPENAI_MODEL_NAME", "gpt-4.1-mini")
+
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
 
 
 # --- Business rules you defined ---
@@ -412,14 +415,19 @@ ALWAYS:
     try:
         resp = client.chat.completions.create(
             model=OPENAI_MODEL_NAME,
-            messages=messages,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": question},
+            ],
             temperature=0,
             max_tokens=400,
         )
         raw = resp.choices[0].message.content
         spec = json.loads(raw)
-    except Exception:
-        spec = _interpret_question_fallback(question, history=history)
+    except Exception as e:
+        st.warning(f"LLM error: {e}")   # ← show error in the UI
+        spec = _interpret_question_fallback(question)
+
 
     spec = _augment_spec_with_date_heuristics(question, spec)
     return spec
