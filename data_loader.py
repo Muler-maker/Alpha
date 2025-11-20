@@ -1,116 +1,97 @@
 import os
+import json
 import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 
+# ---------------------------------------
+# Paths & constants
+# ---------------------------------------
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 
 
+# ---------------------------------------
+# Google Credentials Loader (FINAL FIX)
+# ---------------------------------------
 def get_credentials():
-    # On Streamlit Cloud: use secrets as a table/dict
+    """
+    Load GCP credentials either from Streamlit secrets (cloud)
+    or from credentials.json (local development).
+    """
+
+    # --- Streamlit Cloud mode ---
+    # st.secrets["gcp_service_account"] contains a *JSON string*
     if "gcp_service_account" in st.secrets:
-        info = dict(st.secrets["gcp_service_account"])
+        try:
+            info = json.loads(st.secrets["gcp_service_account"])
+        except Exception as e:
+            raise ValueError(
+                f"Failed to parse gcp_service_account JSON from secrets: {e}"
+            )
         return Credentials.from_service_account_info(info, scopes=SCOPES)
 
-    # Local dev: use credentials.json on disk
-    service_account_file = os.path.join(SCRIPT_DIR, "credentials.json")
-    return Credentials.from_service_account_file(service_account_file, scopes=SCOPES)
+    # --- Local mode ---
+    # Falls back to credentials.json in the project folder
+    local_path = os.path.join(SCRIPT_DIR, "credentials.json")
+    return Credentials.from_service_account_file(local_path, scopes=SCOPES)
 
 
+# Authorize client
 creds = get_credentials()
 gc = gspread.authorize(creds)
 
 
-def get_credentials():
-    """
-    Use Streamlit secrets on the cloud, and credentials.json locally.
-    """
-    # On Streamlit Cloud: take the JSON from secrets
-    if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-        info = json.loads(st.secrets["gcp_service_account"])
-        return Credentials.from_service_account_info(info, scopes=SCOPES)
-
-    # Local dev: use the credentials.json file next to this script
-    return Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-
-
-creds = get_credentials()
-gc = gspread.authorize(creds)
-
-
-# --- Sheet IDs & worksheet names ---
-
-# Orders + Projections live in the same spreadsheet
+# ---------------------------------------
+# Google Sheet IDs
+# ---------------------------------------
 ORDERS_SHEET_ID = "1WNW4IqAG6W_6XVSaSk9kkukztY93qCDQ3mypZaF5F-Y"
-PROJECTION_SHEET_ID = ORDERS_SHEET_ID  # same file, different tab
+PROJECTION_SHEET_ID = ORDERS_SHEET_ID  # Same file, different tab
 METADATA_SHEET_ID = "11GEqq7dR_QjLo7AWzJZRwDyZXsXtZuyOwQkgpwjd9z0"
 
 ORDERS_WORKSHEET_NAME = "Airtable Data"
 PROJECTION_WORKSHEET_NAME = "Projection data"
 METADATA_WORKSHEET_NAME = "Sheet1"
 
-# Shipping statuses we care about
-# VALID_STATUSES = [
-#    "Shipped",
-#    "Partially shipped",
-#    "Shipped and arrived late",
-#   "Order being processed",
-#]
 
-
+# ---------------------------------------
+# Helpers
+# ---------------------------------------
 def _open_worksheet(sheet_id: str, worksheet_name: str):
-    """Internal helper to open a worksheet and return a gspread worksheet."""
     sh = gc.open_by_key(sheet_id)
     ws = sh.worksheet(worksheet_name)
     return ws
 
 
+# ---------------------------------------
+# Loaders
+# ---------------------------------------
 def load_orders() -> pd.DataFrame:
-    """
-    Load raw orders from 'Airtable Data' sheet.
-    No heavy preprocessing here; that happens in preprocess_orders().
-    """
     ws = _open_worksheet(ORDERS_SHEET_ID, ORDERS_WORKSHEET_NAME)
-    records = ws.get_all_records()
-    df = pd.DataFrame(records)
+    df = pd.DataFrame(ws.get_all_records())
     df.columns = [c.strip() for c in df.columns]
     return df
 
 
 def load_projection() -> pd.DataFrame:
-    """
-    Load raw projection data from 'Projection data' tab.
-    """
     ws = _open_worksheet(PROJECTION_SHEET_ID, PROJECTION_WORKSHEET_NAME)
-    records = ws.get_all_records()
-    df = pd.DataFrame(records)
+    df = pd.DataFrame(ws.get_all_records())
     df.columns = [c.strip() for c in df.columns]
     return df
 
 
 def load_metadata() -> pd.DataFrame:
-    """
-    Load raw metadata (Major events database) from 'Sheet1'.
-    """
     ws = _open_worksheet(METADATA_SHEET_ID, METADATA_WORKSHEET_NAME)
-    records = ws.get_all_records()
-    df = pd.DataFrame(records)
+    df = pd.DataFrame(ws.get_all_records())
     df.columns = [c.strip() for c in df.columns]
     return df
 
 
+# ---------------------------------------
+# Preprocessing
+# ---------------------------------------
 def preprocess_orders(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Apply the core logic you already use in your weekly script:
-    - clean column names
-    - rename key columns
-    - filter by valid shipping statuses
-    - convert to proper numeric types
-    - create Year/Week ints
-    """
     if df is None or df.empty:
         raise ValueError("Orders dataframe is empty")
 
@@ -131,29 +112,22 @@ def preprocess_orders(df: pd.DataFrame) -> pd.DataFrame:
 
     for old, new in rename_map.items():
         if old in df.columns:
-            df = df.rename(columns={old: new})
+            df.rename(columns={old: new}, inplace=True)
 
-    # Filter to valid statuses only
-    # if "ShippingStatus" in df.columns:
-    #    df = df[df["ShippingStatus"].isin(VALID_STATUSES)]
-
-    # Drop rows missing core fields
-    required_cols = ["Customer", "Total_mCi", "Year", "Week", "ShippingStatus", "Product"]
-    missing = [c for c in required_cols if c not in df.columns]
+    required = ["Customer", "Total_mCi", "Year", "Week", "ShippingStatus", "Product"]
+    missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"Orders data missing required columns: {missing}")
 
-    df = df.dropna(subset=required_cols)
+    df = df.dropna(subset=required)
 
-    # Convert numeric fields
     for col in ["Total_mCi", "Year", "Week"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    df = df.dropna(subset=["Total_mCi", "Year", "Week"])
 
+    df = df.dropna(subset=["Total_mCi", "Year", "Week"])
     df["Year"] = df["Year"].astype(int)
     df["Week"] = df["Week"].astype(int)
 
-    # Optional: build YearWeek tuple if useful later
     df["YearWeek"] = list(zip(df["Year"], df["Week"]))
 
     return df
