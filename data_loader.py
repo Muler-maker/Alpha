@@ -1,6 +1,9 @@
 # data_loader.py
 
 import os
+import json
+
+import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
@@ -8,14 +11,48 @@ from google.oauth2.service_account import Credentials
 # --- Google Sheets setup ---
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SERVICE_ACCOUNT_FILE = os.path.join(SCRIPT_DIR, "credentials.json")
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
 ]
 
-creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+
+def get_credentials():
+    """
+    On Streamlit Cloud: use the JSON stored in st.secrets["gcp_service_account"].
+    Locally: fall back to credentials.json on disk.
+    """
+    # Streamlit Cloud (or any environment where secrets are defined)
+    if "gcp_service_account" in st.secrets:
+        info = json.loads(st.secrets["gcp_service_account"])
+        return Credentials.from_service_account_info(info, scopes=SCOPES)
+
+    # Local dev: use the file next to this script
+    service_account_file = os.path.join(SCRIPT_DIR, "credentials.json")
+    return Credentials.from_service_account_file(service_account_file, scopes=SCOPES)
+
+
+creds = get_credentials()
 gc = gspread.authorize(creds)
+
+
+
+def get_credentials():
+    """
+    Use Streamlit secrets on the cloud, and credentials.json locally.
+    """
+    # On Streamlit Cloud: take the JSON from secrets
+    if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
+        info = json.loads(st.secrets["gcp_service_account"])
+        return Credentials.from_service_account_info(info, scopes=SCOPES)
+
+    # Local dev: use the credentials.json file next to this script
+    return Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+
+
+creds = get_credentials()
+gc = gspread.authorize(creds)
+
 
 # --- Sheet IDs & worksheet names ---
 
