@@ -1,0 +1,11 @@
+streamlit
+pandas
+python-dotenv
+openai
+Pillow
+gspread
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+altair
+xlsxwriter
