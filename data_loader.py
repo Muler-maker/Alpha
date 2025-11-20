@@ -1,44 +1,28 @@
 import os
-import json
 import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 
-# ---------------------------------------
-# Paths & constants
-# ---------------------------------------
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 
 
-# ---------------------------------------
-# Google Credentials Loader (FINAL FIX)
-# ---------------------------------------
 def get_credentials():
     """
-    Load GCP credentials either from Streamlit secrets (cloud)
-    or from credentials.json (local development).
+    On Streamlit Cloud: use st.secrets['gcp_service_account'] as a dict.
+    Locally: fall back to credentials.json file.
     """
-
-    # --- Streamlit Cloud mode ---
-    # st.secrets["gcp_service_account"] contains a *JSON string*
+    # Streamlit Cloud: TOML table -> dict
     if "gcp_service_account" in st.secrets:
-        try:
-            info = json.loads(st.secrets["gcp_service_account"])
-        except Exception as e:
-            raise ValueError(
-                f"Failed to parse gcp_service_account JSON from secrets: {e}"
-            )
+        info = dict(st.secrets["gcp_service_account"])
         return Credentials.from_service_account_info(info, scopes=SCOPES)
 
-    # --- Local mode ---
-    # Falls back to credentials.json in the project folder
-    local_path = os.path.join(SCRIPT_DIR, "credentials.json")
-    return Credentials.from_service_account_file(local_path, scopes=SCOPES)
+    # Local dev
+    service_account_file = os.path.join(SCRIPT_DIR, "credentials.json")
+    return Credentials.from_service_account_file(service_account_file, scopes=SCOPES)
 
 
-# Authorize client
 creds = get_credentials()
 gc = gspread.authorize(creds)
 
