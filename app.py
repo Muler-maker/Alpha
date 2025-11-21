@@ -122,6 +122,7 @@ st.markdown(
 # ================================
 # 🧩 LOAD DATA
 # ================================
+def init_state():
 def load_data_if_needed():
     if st.session_state.data_loaded:
         return
