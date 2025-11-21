@@ -36,6 +36,9 @@ st.set_page_config(
 st.markdown(
     """
 <style>
+    /* ==========================
+       MAIN CONTAINER
+       ========================== */
     .block-container {
         padding-top: 0.5rem;
         max-width: 1100px;
@@ -46,6 +49,9 @@ st.markdown(
         --isotopia-light:   #9C8AD0;
     }
 
+    /* ==========================
+       DATA BADGE
+       ========================== */
     .data-badge {
         background-color: #E8F7E4;
         color: #267c3b;
@@ -58,17 +64,15 @@ st.markdown(
     }
 
     /* ==========================
-       CUSTOM CHAT FORM STYLING (FINAL)
+       CHAT INPUT AREA (FINAL)
        ========================== */
-
     .alpha-chat-input-wrapper {
-        margin: 1.5rem auto 2rem auto;
-        max-width: 480px;   /* smaller on desktop */
-        width: 85%;         /* smaller than screen on mobile */
+        margin: 1.5rem auto 2rem auto !important;
+        max-width: 480px !important;   /* Smaller on desktop */
+        width: 90% !important;         /* Smaller on mobile */
     }
 
-
-    /* Remove outer form frame */
+    /* Remove the default Streamlit form frame */
     .alpha-chat-input-wrapper [data-testid="stForm"] {
         border: none !important;
         background: transparent !important;
@@ -76,14 +80,14 @@ st.markdown(
         padding: 0 !important;
     }
 
-    /* Chat input styling */
+    /* Chat text input pill styling */
     .alpha-chat-input-wrapper [data-baseweb="base-input"] {
         background-color: #F6F0FF !important;
         color: #2D1B56 !important;
         border: none !important;
         border-radius: 999px !important;
-        box-shadow: none !important;
         padding-left: 18px !important;
+        box-shadow: none !important;
     }
 
     /* Focus ring */
@@ -99,30 +103,7 @@ st.markdown(
         font-size: 15px !important;
     }
 
-    /* Send button */
-    .alpha-chat-input-wrapper .stFormSubmitButton > button {
-        background-color: var(--isotopia-light) !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 50% !important;
-        width: 42px !important;
-        height: 42px !important;
-        font-size: 20px !important;
-        padding: 0 !important;
-        margin-left: 8px;
-    }
-
-    .alpha-chat-input-wrapper .stFormSubmitButton > button:hover {
-        background-color: #6A5CA8 !important;
-    }
-
-    /* Align input + button */
-    .alpha-chat-input-wrapper [data-testid="column"] {
-        display: flex;
-        align-items: center;
-    }
-
-    /* Enforce pill look on text input */
+    /* Perfect pill look — suppress leftover frames */
     [data-testid="stTextInput"] > div > div {
         background-color: #F6F0FF !important;
         border-radius: 999px !important;
@@ -136,25 +117,27 @@ st.markdown(
         font-size: 15px !important;
     }
 
-    /* Remove remaining outer frames */
-    .alpha-chat-input-wrapper [data-testid="stForm"] > div {
-        border: none !important;
-        box-shadow: none !important;
-        background: transparent !important;
-        padding: 0 !important;
-    }
-    /* FORCE the main container to be narrow */
-    div[data-testid="stVerticalBlock"] {
-    max-width: 480px !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
+    /* Align input + button horizontally */
+    .alpha-chat-input-wrapper [data-testid="column"] {
+        display: flex;
+        align-items: center;
     }
 
-    /* Make the chat card actually shrink */
-    .alpha-chat-input-wrapper {
-    max-width: 480px !important;
-    width: 90% !important;
-    margin: 1.5rem auto 2rem auto !important;
+    /* Send button styling */
+    .alpha-chat-input-wrapper .stFormSubmitButton > button {
+        background-color: var(--isotopia-light) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 50% !important;
+        width: 42px !important;
+        height: 42px !important;
+        font-size: 20px !important;
+        margin-left: 8px;
+        padding: 0 !important;
+    }
+
+    .alpha-chat-input-wrapper .stFormSubmitButton > button:hover {
+        background-color: #6A5CA8 !important;
     }
 </style>
 
