@@ -1,6 +1,3 @@
-I also need to centralize the box. You also removed my customized icons for the human and chat. 
-Can you please fix the entire script? 
-
 import os
 import io
 import json
