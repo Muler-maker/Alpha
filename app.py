@@ -63,7 +63,41 @@ st.markdown(
     }
 
     /* ==========================
-       st.chat_input – light purple pill
+       Form-based chat input styling
+       ========================== */
+    
+    /* Target the text input in your form */
+    [data-testid="stForm"] [data-testid="stTextInput"] input {
+        background-color: #F6F0FF !important;
+        border-radius: 999px !important;
+        border: 1px solid #E0D0FF !important;
+        padding: 12px 20px !important;
+        font-size: 15px !important;
+        color: #2D1B56 !important;
+    }
+    
+    /* Remove default input container styling */
+    [data-testid="stForm"] [data-testid="stTextInput"] > div {
+        background: transparent !important;
+        border: none !important;
+    }
+    
+    /* Style the submit button */
+    [data-testid="stForm"] button[kind="primary"] {
+        background-color: var(--isotopia-light) !important;
+        color: #FFFFFF !important;
+        border-radius: 999px !important;
+        border: none !important;
+        padding: 10px 20px !important;
+        box-shadow: none !important;
+    }
+
+    [data-testid="stForm"] button[kind="primary"]:hover {
+        background-color: #6A5CA8 !important;
+    }
+
+    /* ==========================
+       Original st.chat_input styling (kept for reference)
        ========================== */
 
     /* Kill the grey outer bar */
