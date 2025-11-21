@@ -133,6 +133,13 @@ st.markdown(
         color: #4A2E88 !important;                 /* brand purple text */
         font-size: 15px !important;
     }
+    /* REMOVE OUTER FRAME COMPLETELY */
+    .alpha-chat-input-wrapper [data-testid="stForm"] > div {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    }
+
 </style>
 """,
     unsafe_allow_html=True,
