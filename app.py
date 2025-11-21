@@ -35,104 +35,62 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-    .block-container {
-        padding-top: 0.5rem;
-        max-width: 1100px;
-    }
+    /* ================================
+       ALPHA CHAT INPUT — CLEAN RESET
+    ================================== */
 
-    :root {
-        --isotopia-primary: #4A2E88;
-        --isotopia-light:   #9C8AD0;
-    }
-
-    .data-badge {
-        background-color: #E8F7E4;
-        color: #267c3b;
-        padding: 6px 14px;
-        border-radius: 8px;
-        font-size: 13px;
-        display: inline-block;
-        margin-top: 10px;
-        margin-bottom: 18px;
-    }
-
-    /* Center badge */
-    .alpha-badge-wrapper {
-        text-align: center;
-        width: 100%;
-    }
-
-    /* ==========================
-       CUSTOM CHAT FORM STYLING
-       ========================== */
-
+    /* Wrapper centered + wide */
     .alpha-chat-input-wrapper {
-        margin: 2rem auto 2.5rem auto;
-        max-width: 720px;
+        margin: 2rem auto 2rem auto;
+        max-width: 900px;         /* wider */
         width: 100%;
     }
 
-    /* Remove outer white "card" frame around the row */
-    .alpha-chat-input-wrapper [data-testid="stHorizontalBlock"] {
-        background: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
-        padding: 0 !important;
-        margin: 0 !important;
-    }
-
-    /* Remove outer form frame */
+    /* Remove ALL outer white frame around st.form */
     .alpha-chat-input-wrapper [data-testid="stForm"] {
-        border: none !important;
         background: transparent !important;
+        border: none !important;
         box-shadow: none !important;
         padding: 0 !important;
     }
 
-    /* CHAT INPUT: rounded, very light purple */
-    .alpha-chat-input-wrapper [data-baseweb="base-input"] {
-        background-color: #F6F0FF !important;      /* very light purple */
-        color: #2D1B56 !important;
-        border: none !important;
-        border-radius: 999px !important;           /* pill shape */
-        box-shadow: none !important;
-        padding-left: 18px !important;
-    }
-
-    /* Subtle focus ring */
-    .alpha-chat-input-wrapper [data-baseweb="base-input"]:focus-within {
-        box-shadow: 0 0 0 2px #D6C3FF !important;
-        border: none !important;
-    }
-
-    /* Inner text */
-    .alpha-chat-input-wrapper input[type="text"] {
+    /* Remove the invisible border container Streamlit adds */
+    .alpha-chat-input-wrapper [data-testid="stForm"] > div {
         background: transparent !important;
-        color: #2D1B56 !important;
-        font-size: 15px !important;
+        border: none !important;
+        box-shadow: none !important;
+        padding: 0 !important;
     }
 
-    /* SEND BUTTON — purple circle */
-    .alpha-chat-input-wrapper .stFormSubmitButton > button {
-        background-color: var(--isotopia-light) !important;
-        color: white !important;
+    /* Force text input pill shape and purple background */
+    .alpha-chat-input-wrapper [data-testid="stTextInput"] > div > div {
+        background-color: #F6F0FF !important;   /* light purple */
+        border-radius: 999px !important;
         border: none !important;
+        box-shadow: none !important;
+    }
+
+    /* Input text styling */
+    .alpha-chat-input-wrapper input[type="text"] {
+        background-color: transparent !important;
+        color: #4A2E88 !important;              /* brand purple */
+        font-size: 16px !important;
+        padding-left: 14px !important;
+    }
+
+    /* Send button */
+    .alpha-chat-input-wrapper .stFormSubmitButton > button {
+        background-color: #9C8AD0 !important;
+        color: white !important;
         border-radius: 50% !important;
+        border: none !important;
         width: 42px !important;
         height: 42px !important;
         font-size: 20px !important;
-        padding: 0 !important;
         margin-left: 8px;
     }
-
     .alpha-chat-input-wrapper .stFormSubmitButton > button:hover {
-        background-color: #6A5CA8 !important;
-    }
-
-    /* Align input + button vertically */
-    .alpha-chat-input-wrapper [data-testid="column"] {
-        display: flex;
-        align-items: center;
+        background-color: #7E6BB8 !important;
     }
 </style>
 """,
