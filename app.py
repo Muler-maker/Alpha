@@ -133,7 +133,7 @@ st.markdown(
     [data-testid="stForm"] button[kind="primary"],
     [data-testid="stForm"] button[type="submit"] {
         background-color: var(--isotopia-light) !important;
-        color: #FFFFFF !important;
+        color: #6B7280 !important;
         border-radius: 999px !important;
         border: none !important;
         width: 38px !important;
@@ -158,12 +158,18 @@ st.markdown(
         background: transparent !important;
     }
     
-    /* Style button icon */
+    /* Remove white background from button base */
+    [data-testid="stForm"] button[kind="primary"] > div,
+    [data-testid="stForm"] button[type="submit"] > div {
+        background: transparent !important;
+    }
+    
+    /* Style button icon - grey arrow */
     [data-testid="stForm"] button p {
         margin: 0 !important;
         font-size: 16px !important;
         line-height: 1 !important;
-        color: #FFFFFF !important;
+        color: #6B7280 !important;
     }
 
     /* ==========================
