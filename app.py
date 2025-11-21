@@ -98,21 +98,23 @@ st.markdown(
         border: 1px solid #E0D0FF !important;
         display: flex !important;
         align-items: center !important;
-        padding: 4px !important;
-        gap: 0 !important;
+        padding: 4px 4px 4px 16px !important;
+        gap: 8px !important;
+        position: relative !important;
     }
     
-    /* Input column - remove any background */
+    /* Input column - remove any background, take most space */
     [data-testid="stForm"] [data-testid="column"]:first-child {
-        flex: 1 !important;
+        flex: 1 1 auto !important;
         background: transparent !important;
+        min-width: 0 !important;
     }
     
-    /* Button column - make it fit content on desktop */
+    /* Button column - fixed size */
     [data-testid="stForm"] [data-testid="column"]:last-child {
         flex: 0 0 auto !important;
-        width: auto !important;
-        min-width: auto !important;
+        width: 38px !important;
+        min-width: 38px !important;
         background: transparent !important;
     }
     
@@ -128,42 +130,27 @@ st.markdown(
     [data-testid="stForm"] [data-testid="stTextInput"] input {
         background: transparent !important;
         border: none !important;
-        padding: 12px 16px !important;
+        padding: 8px 0px !important;
         font-size: 15px !important;
         color: #2D1B56 !important;
         box-shadow: none !important;
         width: 100% !important;
     }
     
-    /* Fix placeholder text wrapping */
+    /* Fix placeholder text */
     [data-testid="stForm"] [data-testid="stTextInput"] input::placeholder {
-        white-space: nowrap !important;
-        overflow: hidden !important;
-        text-overflow: ellipsis !important;
+        color: #9CA3AF !important;
+        opacity: 0.7 !important;
     }
     
     /* Mobile-specific adjustments */
     @media (max-width: 768px) {
-        /* Position button absolutely on mobile */
-        [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
-            position: relative !important;
-        }
-        
-        [data-testid="stForm"] [data-testid="column"]:first-child {
-            padding-right: 45px !important;
-        }
-        
-        [data-testid="stForm"] [data-testid="column"]:last-child {
-            position: absolute !important;
-            right: 6px !important;
-            top: 50% !important;
-            transform: translateY(-50%) !important;
-            z-index: 10 !important;
-        }
-        
         [data-testid="stForm"] [data-testid="stTextInput"] input {
             font-size: 14px !important;
-            padding: 10px 12px !important;
+        }
+        
+        [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
+            padding: 4px 4px 4px 14px !important;
         }
     }
     
