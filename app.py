@@ -65,21 +65,21 @@ st.markdown(
     /* ==========================
        Form-based chat input styling
        ========================== */
-    
+
     /* Remove form border and background */
     [data-testid="stForm"] {
         border: none !important;
         padding: 0 !important;
         background: transparent !important;
     }
-    
+
     /* Remove grey background from all form containers */
     [data-testid="stForm"] > div {
         background: transparent !important;
         border: none !important;
     }
-    
-    /* Hide the "Press Enter to submit form" message - multiple selectors */
+
+    /* Hide the "Press Enter to submit" message */
     [data-testid="stForm"] [data-testid="InputInstructions"],
     [data-testid="stForm"] .instructions,
     [data-testid="stForm"] small,
@@ -90,8 +90,8 @@ st.markdown(
         height: 0 !important;
         opacity: 0 !important;
     }
-    
-    /* Make columns container behave like a single unit with purple background */
+
+    /* Purple pill wrapper */
     [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
         background-color: #F6F0FF !important;
         border-radius: 999px !important;
@@ -102,31 +102,31 @@ st.markdown(
         gap: 8px !important;
         position: relative !important;
     }
-    
-    /* Input column - remove any background, take most space */
+
+    /* Input column */
     [data-testid="stForm"] [data-testid="column"]:first-child {
         flex: 1 1 auto !important;
         background: transparent !important;
         min-width: 0 !important;
     }
-    
-    /* Button column - fixed size */
+
+    /* Button column (desktop default) */
     [data-testid="stForm"] [data-testid="column"]:last-child {
         flex: 0 0 auto !important;
         width: 38px !important;
         min-width: 38px !important;
         background: transparent !important;
     }
-    
-    /* Target the text input wrapper */
+
+    /* Input wrapper transparent */
     [data-testid="stForm"] [data-testid="stTextInput"],
     [data-testid="stForm"] [data-testid="stTextInput"] > div,
     [data-testid="stForm"] [data-testid="stTextInput"] > div > div {
         background: transparent !important;
         border: none !important;
     }
-    
-    /* Target the text input - make it transparent */
+
+    /* Input field */
     [data-testid="stForm"] [data-testid="stTextInput"] input {
         background: transparent !important;
         border: none !important;
@@ -136,19 +136,19 @@ st.markdown(
         box-shadow: none !important;
         width: 100% !important;
     }
-    
-    /* Fix placeholder text */
+
+    /* Placeholder */
     [data-testid="stForm"] [data-testid="stTextInput"] input::placeholder {
         color: #9CA3AF !important;
         opacity: 0.7 !important;
     }
-    
+
     /* ================================
-       MOBILE FIXES (≤ 768px)
+       FINAL MOBILE FIX (≤ 768px)
        ================================ */
     @media (max-width: 768px) {
 
-        /* Prevent logo cutoff + give margin on sides */
+        /* Fix logo cropping */
         .block-container {
             padding-top: 2.2rem !important;
             max-width: 100% !important;
@@ -156,42 +156,58 @@ st.markdown(
             padding-right: 1rem !important;
         }
 
-        /* Make the chat pill full-width on small screens */
+        /* Purple pill container */
         [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
             width: 100% !important;
-            padding: 6px 10px 6px 16px !important;
-            gap: 6px !important;
+            padding: 6px 52px 6px 16px !important; /* reserve space on right for button */
+            position: relative !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: flex-start !important;
         }
 
-        /* Input column – very flexible */
+        /* Input column expands fully */
         [data-testid="stForm"] [data-testid="column"]:first-child {
             flex: 1 1 auto !important;
             min-width: 0 !important;
         }
 
-        /* Button column – fixed size, pinned to the right */
+        /* Button column = ABSOLUTE inside the purple pill */
         [data-testid="stForm"] [data-testid="column"]:last-child {
-            flex: 0 0 42px !important;
-            width: 42px !important;
-            min-width: 42px !important;
+            position: absolute !important;
+            top: 50% !important;
+            right: 8px !important;
+            transform: translateY(-50%) !important;
+            flex: 0 0 auto !important;
+            width: auto !important;
+            min-width: 0 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            margin: 0 !important;
         }
 
-        /* Button size on mobile */
+        /* Clean internal wrappers */
+        [data-testid="stForm"] [data-testid="column"]:last-child * {
+            margin: 0 !important;
+        }
+
+        /* Mobile button size */
         [data-testid="stForm"] button {
-            width: 42px !important;
-            height: 42px !important;
-            min-width: 42px !important;
-            min-height: 42px !important;
+            width: 38px !important;
+            height: 38px !important;
+            min-width: 38px !important;
+            min-height: 38px !important;
         }
 
-        /* Input text size + vertical padding */
+        /* Input font size */
         [data-testid="stForm"] [data-testid="stTextInput"] input {
             font-size: 14px !important;
             padding-top: 10px !important;
             padding-bottom: 10px !important;
         }
 
-        /* Make footer wrapper respect screen width */
+        /* Footer alignment */
         .alpha-chat-footer-inner,
         .alpha-chat-input-wrapper {
             width: 100% !important;
@@ -200,61 +216,14 @@ st.markdown(
         }
     }
 
-   /* FORCE chat input to render as a single-row flex on mobile */
-@media (max-width: 768px) {
-
-    /* Make sure the horizontal block behaves as a true flex-row */
-    [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
-        display: flex !important;
-        flex-direction: row !important;
-        align-items: center !important;
-        justify-content: space-between !important;
-        width: 100% !important;
-    }
-
-    /* Override Streamlit’s auto-stacking of columns */
-    [data-testid="stForm"] [data-testid="column"] {
-        display: flex !important;
-        align-items: center !important;
-    }
-
-    /* Ensure input grows and button does NOT wrap */
-    [data-testid="stForm"] [data-testid="column"]:first-child {
-        flex: 1 1 auto !important;
-        width: auto !important;
-        min-width: 0 !important;
-    }
-
-    /* Force button column to stay at the far right */
-    [data-testid="stForm"] [data-testid="column"]:last-child {
-        flex: 0 0 42px !important;
-        width: 42px !important;
-        min-width: 42px !important;
-        justify-content: flex-end !important;
-        margin-left: auto !important;   /* ⭐ Critical: pushes button fully right */
-    }
-
-    /* Prevent internal Streamlit wrappers from pushing things */
-    [data-testid="stForm"] [data-testid="column"]:last-child > div {
-        width: 100% !important;
-        display: flex !important;
-        justify-content: flex-end !important;
-    }
-
-    /* Ensure the button itself aligns perfectly */
-    [data-testid="stForm"] button {
-        margin-left: auto !important;
-    }
-}
- 
     /* Focus state */
     [data-testid="stForm"] [data-testid="stTextInput"] input:focus {
         outline: none !important;
         box-shadow: none !important;
         background: transparent !important;
     }
-    
-    /* Style the submit button as a circle with purple background */
+
+    /* Submit button (desktop + mobile) */
     [data-testid="stForm"] button[kind="primary"],
     [data-testid="stForm"] button[type="submit"],
     [data-testid="stForm"] button {
@@ -266,94 +235,37 @@ st.markdown(
         height: 38px !important;
         min-width: 38px !important;
         min-height: 38px !important;
-        padding: 0 !important;
-        box-shadow: none !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
         margin: 0 !important;
+        padding: 0 !important;
+        box-shadow: none !important;
     }
 
-    [data-testid="stForm"] button[kind="primary"]:hover,
-    [data-testid="stForm"] button[type="submit"]:hover,
     [data-testid="stForm"] button:hover {
         background-color: #6A5CA8 !important;
     }
-    
-    /* Remove any button wrapper backgrounds */
+
+    /* Remove backgrounds around button */
     [data-testid="stForm"] [data-testid="column"]:last-child > div {
         background: transparent !important;
     }
-    
-    /* Target ALL elements inside button with purple background */
+
+    /* Remove background from button children */
     [data-testid="stForm"] button *,
-    [data-testid="stForm"] button > *,
-    [data-testid="stForm"] button div,
-    [data-testid="stForm"] button span,
-    [data-testid="stForm"] button[kind="primary"] *,
-    [data-testid="stForm"] button[type="submit"] * {
+    [data-testid="stForm"] button > * {
         background-color: transparent !important;
-        background: transparent !important;
     }
-    
-    /* Style button icon - grey arrow */
+
+    /* Icon text */
     [data-testid="stForm"] button p {
         margin: 0 !important;
         font-size: 16px !important;
-        line-height: 1 !important;
         color: #6B7280 !important;
-        background: transparent !important;
+        line-height: 1 !important;
     }
 
-    /* ==========================
-       Original st.chat_input styling (kept for reference)
-       ========================== */
-
-    /* Kill the grey outer bar */
-    [data-testid="stChatInput"] {
-        background: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
-    }
-
-    /* Inner wrapper (also grey by default) */
-    [data-testid="stChatInput"] > div {
-        background: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
-    }
-
-    /* Actual input pill */
-    [data-testid="stChatInput"] [data-baseweb="base-input"] {
-        background-color: #F6F0FF !important;   /* light purple */
-        border-radius: 999px !important;
-        border: 1px solid #E0D0FF !important;
-        box-shadow: none !important;
-        padding-left: 18px !important;
-    }
-
-    /* Text inside input */
-    [data-testid="stChatInput"] input,
-    [data-testid="stChatInput"] textarea {
-        background: transparent !important;
-        color: #2D1B56 !important;
-        font-size: 15px !important;
-    }
-
-    /* Send button – purple circle */
-    [data-testid="stChatInput"] button[kind="primary"] {
-        background-color: var(--isotopia-light) !important;
-        color: #FFFFFF !important;
-        border-radius: 999px !important;
-        border: none !important;
-        width: 40px !important;
-        height: 40px !important;
-        box-shadow: none !important;
-    }
-
-    [data-testid="stChatInput"] button[kind="primary"]:hover {
-        background-color: #6A5CA8 !important;
-    }
 </style>
 """,
     unsafe_allow_html=True,
