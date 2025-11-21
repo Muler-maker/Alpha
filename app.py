@@ -61,10 +61,13 @@ st.markdown(
        CUSTOM CHAT FORM STYLING (FINAL)
        ========================== */
 
+    /* Wrapper for the whole chat input block:
+       - centered
+       - limited width so it’s not full-screen */
     .alpha-chat-input-wrapper {
         margin: 2rem auto 2.5rem auto;
-        max-width: 720px;
-        width: 100%;
+        max-width: 480px;          /* <<< main knob: shorten / widen chat bar */
+        width: 100%;               /* responsive on mobile */
     }
 
     /* Remove outer form frame */
@@ -75,7 +78,7 @@ st.markdown(
         padding: 0 !important;
     }
 
-    /* CHAT INPUT: Rounded, very light purple */
+    /* CHAT INPUT: rounded, very light purple */
     .alpha-chat-input-wrapper [data-baseweb="base-input"] {
         background-color: #F6F0FF !important;      /* very light purple */
         color: #2D1B56 !important;
@@ -120,68 +123,30 @@ st.markdown(
         display: flex;
         align-items: center;
     }
-        /* FORCE CHAT TEXT INPUT TO BRAND STYLE */
+
+    /* Force chat text input to brand style */
     [data-testid="stTextInput"] > div > div {
-        background-color: #F6F0FF !important;      /* very light purple */
-        border-radius: 999px !important;           /* pill shape */
-        border: none !important;                   /* no frame */
+        background-color: #F6F0FF !important;
+        border-radius: 999px !important;
+        border: none !important;
         box-shadow: none !important;
     }
 
     [data-testid="stTextInput"] input[type="text"] {
         background-color: transparent !important;
-        color: #4A2E88 !important;                 /* brand purple text */
+        color: #4A2E88 !important;
         font-size: 15px !important;
     }
-    /* REMOVE OUTER FRAME COMPLETELY */
+
+    /* Remove any outer white rounded frame around the form */
     .alpha-chat-input-wrapper [data-testid="stForm"] > div {
-    border: none !important;
-    box-shadow: none !important;
-    background: transparent !important;
-    }
-    /* REMOVE the outer white rounded frame around the form */
-    .alpha-chat-input-wrapper [data-testid="stForm"] > div:first-child {
-    border: none !important;
-    background: transparent !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-    }
-
-    /* Also remove its parent container frame */
-    .alpha-chat-input-wrapper [data-testid="stForm"] div[data-testid="baseButton-header"] {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    }
-
-    /* Final nuke — removes the outermost container of the form */
-    .alpha-chat-input-wrapper div[data-testid="stForm"] > div {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    }
-    
-    /* Make the chat input area narrower and centered */
-    .chat-container {
-    width: 75% !important;
-    margin: 0 auto !important;
-    }
-
-    /* Style the input box itself */
-    .chat-container input {
-    background-color: #f4e8ff !important;
-    padding: 14px !important;
-    border-radius: 12px !important;
-    border: 1px solid #e0caff !important;
-    }
-
-    /* Make the submit button align with the same width */
-    .chat-submit-container {
-    width: 75% !important;
-    margin: 0 auto !important;
-    text-align: right;
+        border: none !important;
+        box-shadow: none !important;
+        background: transparent !important;
+        padding: 0 !important;
     }
 </style>
+
 """,
     unsafe_allow_html=True,
 )
