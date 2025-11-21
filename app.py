@@ -40,9 +40,9 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-    /* Main content width + top padding */
+    /* Main content width + top padding - fix image cutoff */
     .block-container {
-        padding-top: 0.5rem;
+        padding-top: 1rem;
         max-width: 1100px;
     }
 
@@ -66,22 +66,32 @@ st.markdown(
        Form-based chat input styling
        ========================== */
     
+    /* Remove form border and background */
     [data-testid="stForm"] {
         border: none !important;
         padding: 0 !important;
         background: transparent !important;
     }
     
+    /* Remove grey background from all form containers */
     [data-testid="stForm"] > div {
         background: transparent !important;
         border: none !important;
     }
     
-    /* Hide the "Press Enter to submit form" message */
-    [data-testid="stForm"] [data-testid="InputInstructions"] {
+    /* Hide the "Press Enter to submit form" message - multiple selectors */
+    [data-testid="stForm"] [data-testid="InputInstructions"],
+    [data-testid="stForm"] .instructions,
+    [data-testid="stForm"] small,
+    [data-testid="stForm"] [class*="instructions"],
+    [data-testid="stForm"] [class*="InputInstructions"] {
         display: none !important;
+        visibility: hidden !important;
+        height: 0 !important;
+        opacity: 0 !important;
     }
     
+    /* Make columns container behave like a single unit with purple background */
     [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
         background-color: #F6F0FF !important;
         border-radius: 999px !important;
@@ -90,26 +100,23 @@ st.markdown(
         align-items: center !important;
         padding: 4px !important;
         gap: 0 !important;
-        position: relative !important;
     }
     
+    /* Input column - remove any background */
     [data-testid="stForm"] [data-testid="column"]:first-child {
         flex: 1 !important;
         background: transparent !important;
-        position: static !important;
     }
     
+    /* Button column - make it fit content on desktop */
     [data-testid="stForm"] [data-testid="column"]:last-child {
-        position: absolute !important;
-        right: 4px !important;
-        top: 50% !important;
-        transform: translateY(-50%) !important;
+        flex: 0 0 auto !important;
         width: auto !important;
         min-width: auto !important;
         background: transparent !important;
-        z-index: 10 !important;
     }
     
+    /* Target the text input wrapper */
     [data-testid="stForm"] [data-testid="stTextInput"],
     [data-testid="stForm"] [data-testid="stTextInput"] > div,
     [data-testid="stForm"] [data-testid="stTextInput"] > div > div {
@@ -117,27 +124,57 @@ st.markdown(
         border: none !important;
     }
     
-    /* Target the text input - this is a key part of the fix */
+    /* Target the text input - make it transparent */
     [data-testid="stForm"] [data-testid="stTextInput"] input {
         background: transparent !important;
         border: none !important;
-        padding: 8px 50px 8px 16px !important;
+        padding: 12px 16px !important;
         font-size: 15px !important;
         color: #2D1B56 !important;
         box-shadow: none !important;
         width: 100% !important;
-        /* Ensures the text doesn't overflow its container */
-        text-overflow: ellipsis;
-        overflow: hidden;
-        white-space: nowrap;
     }
     
+    /* Fix placeholder text wrapping */
+    [data-testid="stForm"] [data-testid="stTextInput"] input::placeholder {
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+    }
+    
+    /* Mobile-specific adjustments */
+    @media (max-width: 768px) {
+        /* Position button absolutely on mobile */
+        [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
+            position: relative !important;
+        }
+        
+        [data-testid="stForm"] [data-testid="column"]:first-child {
+            padding-right: 45px !important;
+        }
+        
+        [data-testid="stForm"] [data-testid="column"]:last-child {
+            position: absolute !important;
+            right: 6px !important;
+            top: 50% !important;
+            transform: translateY(-50%) !important;
+            z-index: 10 !important;
+        }
+        
+        [data-testid="stForm"] [data-testid="stTextInput"] input {
+            font-size: 14px !important;
+            padding: 10px 12px !important;
+        }
+    }
+    
+    /* Focus state */
     [data-testid="stForm"] [data-testid="stTextInput"] input:focus {
         outline: none !important;
         box-shadow: none !important;
         background: transparent !important;
     }
     
+    /* Style the submit button as a circle with purple background */
     [data-testid="stForm"] button[kind="primary"],
     [data-testid="stForm"] button[type="submit"],
     [data-testid="stForm"] button {
@@ -163,10 +200,12 @@ st.markdown(
         background-color: #6A5CA8 !important;
     }
     
+    /* Remove any button wrapper backgrounds */
     [data-testid="stForm"] [data-testid="column"]:last-child > div {
         background: transparent !important;
     }
     
+    /* Target ALL elements inside button with purple background */
     [data-testid="stForm"] button *,
     [data-testid="stForm"] button > *,
     [data-testid="stForm"] button div,
@@ -177,6 +216,7 @@ st.markdown(
         background: transparent !important;
     }
     
+    /* Style button icon - grey arrow */
     [data-testid="stForm"] button p {
         margin: 0 !important;
         font-size: 16px !important;
@@ -184,42 +224,56 @@ st.markdown(
         color: #6B7280 !important;
         background: transparent !important;
     }
-    
-    /* =======================================
-       MOBILE-SPECIFIC OVERRIDES (The Fix)
-       ======================================= */
-    @media (max-width: 768px) {
-        /*
-         This rule targets the input field only on screens 768px or smaller.
-         It reduces the padding on the left and right to give the text more
-         room to breathe, preventing it from being cut off.
-        */
-        [data-testid="stForm"] [data-testid="stTextInput"] input {
-            padding: 8px 45px 8px 12px !important;
-        }
 
-        /*
-         This rule slightly adjusts the button's position from the right edge
-         to ensure it aligns nicely within the container on mobile.
-        */
-        [data-testid="stForm"] [data-testid="column"]:last-child {
-            right: 6px !important;
-        }
+    /* ==========================
+       Original st.chat_input styling (kept for reference)
+       ========================== */
+
+    /* Kill the grey outer bar */
+    [data-testid="stChatInput"] {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
     }
 
-    /* =======================================
-       RESPONSIVE LOGO (General Fix)
-       ======================================= */
-    /*
-     This is a general fix for images. You may need to inspect your app
-     to find the correct selector for your logo, but it's often inside
-     a div with a class like 'stApp'.
-    */
-    .stApp [data-testid="stImage"] img {
-        max-width: 100% !important;
-        height: auto !important;
+    /* Inner wrapper (also grey by default) */
+    [data-testid="stChatInput"] > div {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
     }
 
+    /* Actual input pill */
+    [data-testid="stChatInput"] [data-baseweb="base-input"] {
+        background-color: #F6F0FF !important;   /* light purple */
+        border-radius: 999px !important;
+        border: 1px solid #E0D0FF !important;
+        box-shadow: none !important;
+        padding-left: 18px !important;
+    }
+
+    /* Text inside input */
+    [data-testid="stChatInput"] input,
+    [data-testid="stChatInput"] textarea {
+        background: transparent !important;
+        color: #2D1B56 !important;
+        font-size: 15px !important;
+    }
+
+    /* Send button – purple circle */
+    [data-testid="stChatInput"] button[kind="primary"] {
+        background-color: var(--isotopia-light) !important;
+        color: #FFFFFF !important;
+        border-radius: 999px !important;
+        border: none !important;
+        width: 40px !important;
+        height: 40px !important;
+        box-shadow: none !important;
+    }
+
+    [data-testid="stChatInput"] button[kind="primary"]:hover {
+        background-color: #6A5CA8 !important;
+    }
 </style>
 """,
     unsafe_allow_html=True,
