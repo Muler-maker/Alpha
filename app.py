@@ -54,14 +54,7 @@ st.markdown(
         font-size: 13px;
         display: inline-block;
         margin-top: 10px;
-        margin-bottom: 18px;
-    }
-
-    .sidebar-title {
-        font-size: 16px;
-        font-weight: 600;
-        color: var(--isotopia-primary);
-        margin-bottom: 6px;
+        margin-bottom: 10px;
     }
 
     /* ==========================
@@ -215,26 +208,27 @@ def main():
                     st.rerun()
                 else:
                     st.error("Incorrect password.")
-        return
+        return  # stop here until authenticated
 
     # ---------- DATA ----------
     load_data_if_needed()
     df = st.session_state.consolidated_df
 
-    # Layout: left = chats/export, right = main chat
-    side_col, main_col = st.columns([1.1, 4], gap="large")
+    # ========= MAIN COLUMN ONLY =========
+    # Data badge
+    st.markdown(
+        f"<div class='data-badge'>✔ Data synced · "
+        f"{len(df):,} rows · {len(df.columns)} columns</div>",
+        unsafe_allow_html=True,
+    )
 
-    # ---------- LEFT COLUMN: CHATS / EXPORT ----------
-    with side_col:
-        st.markdown("<div class='sidebar-title'>Chats</div>", unsafe_allow_html=True)
+    # Small download buttons (no left sidebar)
+    if st.session_state.messages:
+        col_dl1, col_dl2 = st.columns(2)
+        export_df = pd.DataFrame(st.session_state.messages)
 
-        if st.session_state.messages:
-            st.caption("Current session")
-
-            export_df = pd.DataFrame(st.session_state.messages)
-
-            # CSV download
-            csv_bytes = export_df.to_csv(index=False).encode("utf-8")
+        csv_bytes = export_df.to_csv(index=False).encode("utf-8")
+        with col_dl1:
             st.download_button(
                 "💾 Download chat (CSV)",
                 data=csv_bytes,
@@ -243,10 +237,10 @@ def main():
                 key="download_chat_csv",
             )
 
-            # Excel download
-            buf = io.BytesIO()
-            with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-                export_df.to_excel(writer, index=False, sheet_name="Chat")
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+            export_df.to_excel(writer, index=False, sheet_name="Chat")
+        with col_dl2:
             st.download_button(
                 "📊 Download chat (Excel)",
                 data=buf.getvalue(),
@@ -257,85 +251,83 @@ def main():
                 ),
                 key="download_chat_excel",
             )
-        else:
-            st.caption("No messages yet.")
 
-    # ---------- RIGHT COLUMN: CHAT ----------
-    with main_col:
-        # Data badge
-        st.markdown(
-            f"<div class='data-badge'>✔ Data synced · "
-            f"{len(df):,} rows · {len(df.columns)} columns</div>",
-            unsafe_allow_html=True,
-        )
+    # ---------- CHAT HISTORY ----------
+    for msg in st.session_state.messages:
+        role = msg.get("role", "assistant")
+        content = msg.get("content", "")
+        avatar = "🧪" if role == "user" else "☢️"
 
-        # Show existing conversation
-        for msg in st.session_state.messages:
-            role = msg.get("role", "assistant")
-            content = msg.get("content", "")
-            if role == "user":
-                avatar = "🧪"   # your user icon
-            else:
-                avatar = "☢️"   # Alpha icon
+        with st.chat_message(role, avatar=avatar):
+            st.markdown(content)
 
-            with st.chat_message(role, avatar=avatar):
-                st.markdown(content)
+    # Anchor used for scrolling
+    st.markdown('<div id="scroll-bottom"></div>', unsafe_allow_html=True)
 
-        # Chat input (centered, narrow)
-        st.markdown('<div class="alpha-chat-input-wrapper">', unsafe_allow_html=True)
-        with st.form("alpha-chat-form", clear_on_submit=True):
-            col_input, col_btn = st.columns([12, 1])
+    # ---------- CHAT INPUT (BOTTOM) ----------
+    st.markdown('<div class="alpha-chat-input-wrapper">', unsafe_allow_html=True)
+    with st.form("alpha-chat-form", clear_on_submit=True):
+        col_input, col_btn = st.columns([12, 1])
 
-            with col_input:
-                prompt = st.text_input(
-                    "Ask a question",
-                    value="",
-                    label_visibility="collapsed",
-                    placeholder=(
-                        "Ask a question about orders, projections, or major events…"
-                    ),
-                )
+        with col_input:
+            prompt = st.text_input(
+                "Ask a question",
+                value="",
+                label_visibility="collapsed",
+                placeholder="Ask a question about orders, projections, or major events…",
+            )
 
-            with col_btn:
-                submitted = st.form_submit_button("➤")
-
-        st.markdown("</div>", unsafe_allow_html=True)
+        with col_btn:
+            submitted = st.form_submit_button("➤")
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # ---------- PROCESS NEW QUESTION ----------
     if submitted and prompt.strip():
         user_text = prompt.strip()
 
-        # Save user message
+        # Store user message
         st.session_state.messages.append({"role": "user", "content": user_text})
 
-        with main_col:
-            # Show latest user message immediately
-            with st.chat_message("user", avatar="🧪"):
-                st.markdown(user_text)
+        # Show user message immediately
+        with st.chat_message("user", avatar="🧪"):
+            st.markdown(user_text)
 
-            # Alpha answer
-            with st.chat_message("assistant", avatar="☢️"):
-                try:
-                    with st.spinner("Thinking…"):
-                        raw_answer = answer_question_from_df(
-                            user_text,
-                            df,
-                            history=st.session_state.messages,
-                        )
-                except Exception as e:
-                    raw_answer = f"An error occurred: {e}"
+        # Alpha answer
+        with st.chat_message("assistant", avatar="☢️"):
+            try:
+                with st.spinner("Thinking…"):
+                    raw_answer = answer_question_from_df(
+                        user_text,
+                        df,
+                        history=st.session_state.messages,
+                    )
+            except Exception as e:
+                raw_answer = f"An error occurred: {e}"
 
-                cleaned = strip_chart_blocks(raw_answer)
-                st.markdown(cleaned)
+            cleaned = strip_chart_blocks(raw_answer)
+            st.markdown(cleaned)
 
-                # Try to render chart if present
-                try:
-                    render_chart_from_answer(raw_answer)
-                except Exception as e:
-                    st.caption(f"⚠️ Chart error: {e}")
+            # Try to render chart if present
+            try:
+                render_chart_from_answer(raw_answer)
+            except Exception as e:
+                st.caption(f"⚠️ Chart error: {e}")
 
-        # Save assistant message
+        # Store assistant message
         st.session_state.messages.append({"role": "assistant", "content": cleaned})
+
+    # ---------- AUTO SCROLL TO BOTTOM ----------
+    st.markdown(
+        """
+        <script>
+        const bottom = document.getElementById("scroll-bottom");
+        if (bottom) {
+            bottom.scrollIntoView({behavior: "smooth", block: "end"});
+        }
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 if __name__ == "__main__":
