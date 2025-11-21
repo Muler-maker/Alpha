@@ -6,7 +6,7 @@ import streamlit as st
 from dotenv import load_dotenv
 from openai import OpenAI
 from PIL import Image
-
+pd.options.display.float_format = "{:,.0f}".format
 from charts import render_chart_from_answer, strip_chart_blocks
 from data_loader import (
     load_orders,
