@@ -200,7 +200,53 @@ st.markdown(
         }
     }
 
-    
+   /* FORCE chat input to render as a single-row flex on mobile */
+@media (max-width: 768px) {
+
+    /* Make sure the horizontal block behaves as a true flex-row */
+    [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        width: 100% !important;
+    }
+
+    /* Override Streamlit’s auto-stacking of columns */
+    [data-testid="stForm"] [data-testid="column"] {
+        display: flex !important;
+        align-items: center !important;
+    }
+
+    /* Ensure input grows and button does NOT wrap */
+    [data-testid="stForm"] [data-testid="column"]:first-child {
+        flex: 1 1 auto !important;
+        width: auto !important;
+        min-width: 0 !important;
+    }
+
+    /* Force button column to stay at the far right */
+    [data-testid="stForm"] [data-testid="column"]:last-child {
+        flex: 0 0 42px !important;
+        width: 42px !important;
+        min-width: 42px !important;
+        justify-content: flex-end !important;
+        margin-left: auto !important;   /* ⭐ Critical: pushes button fully right */
+    }
+
+    /* Prevent internal Streamlit wrappers from pushing things */
+    [data-testid="stForm"] [data-testid="column"]:last-child > div {
+        width: 100% !important;
+        display: flex !important;
+        justify-content: flex-end !important;
+    }
+
+    /* Ensure the button itself aligns perfectly */
+    [data-testid="stForm"] button {
+        margin-left: auto !important;
+    }
+}
+ 
     /* Focus state */
     [data-testid="stForm"] [data-testid="stTextInput"] input:focus {
         outline: none !important;
