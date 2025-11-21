@@ -66,12 +66,23 @@ st.markdown(
        Form-based chat input styling
        ========================== */
     
+    /* Remove form border */
+    [data-testid="stForm"] {
+        border: none !important;
+        padding: 0 !important;
+    }
+    
+    /* Container for the input to position button inside */
+    [data-testid="stForm"] [data-testid="column"]:first-child {
+        position: relative !important;
+    }
+    
     /* Target the text input in your form */
     [data-testid="stForm"] [data-testid="stTextInput"] input {
         background-color: #F6F0FF !important;
         border-radius: 999px !important;
         border: 1px solid #E0D0FF !important;
-        padding: 12px 20px !important;
+        padding: 12px 50px 12px 20px !important;
         font-size: 15px !important;
         color: #2D1B56 !important;
     }
@@ -82,18 +93,40 @@ st.markdown(
         border: none !important;
     }
     
-    /* Style the submit button */
+    /* Position the button column absolutely inside the input */
+    [data-testid="stForm"] [data-testid="column"]:last-child {
+        position: absolute !important;
+        right: 4px !important;
+        top: 50% !important;
+        transform: translateY(-50%) !important;
+        width: auto !important;
+        min-width: auto !important;
+    }
+    
+    /* Style the submit button as a circle inside the input */
     [data-testid="stForm"] button[kind="primary"] {
         background-color: var(--isotopia-light) !important;
         color: #FFFFFF !important;
         border-radius: 999px !important;
         border: none !important;
-        padding: 10px 20px !important;
+        width: 36px !important;
+        height: 36px !important;
+        min-width: 36px !important;
+        padding: 0 !important;
         box-shadow: none !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
     }
 
     [data-testid="stForm"] button[kind="primary"]:hover {
         background-color: #6A5CA8 !important;
+    }
+    
+    /* Hide button text, show only icon */
+    [data-testid="stForm"] button[kind="primary"] p {
+        margin: 0 !important;
+        font-size: 18px !important;
     }
 
     /* ==========================
