@@ -120,6 +120,19 @@ st.markdown(
         display: flex;
         align-items: center;
     }
+        /* FORCE CHAT TEXT INPUT TO BRAND STYLE */
+    [data-testid="stTextInput"] > div > div {
+        background-color: #F6F0FF !important;      /* very light purple */
+        border-radius: 999px !important;           /* pill shape */
+        border: none !important;                   /* no frame */
+        box-shadow: none !important;
+    }
+
+    [data-testid="stTextInput"] input[type="text"] {
+        background-color: transparent !important;
+        color: #4A2E88 !important;                 /* brand purple text */
+        font-size: 15px !important;
+    }
 </style>
 """,
     unsafe_allow_html=True,
