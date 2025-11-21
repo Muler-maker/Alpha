@@ -132,7 +132,7 @@ st.markdown(
 /* Pill background for the text input */
 .alpha-chat-input-wrapper [data-baseweb="base-input"] {
     background-color: var(--chat-bg) !important;
-    color: #2D1B56 !important;
+    color: #F6F0FF !important;
     border: none !important;
     border-radius: 999px !important;
     padding-left: 18px !important;
