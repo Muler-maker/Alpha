@@ -35,7 +35,7 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-    /* Main content width + top padding */
+    /* Main page container */
     .block-container {
         padding-top: 0.5rem;
         max-width: 1100px;
@@ -54,83 +54,53 @@ st.markdown(
         font-size: 13px;
         display: inline-block;
         margin-top: 10px;
-        margin-bottom: 10px;
+        margin-bottom: 12px;
     }
 
-    /* ==========================
-       CHAT INPUT AREA
-       ========================== */
-    .alpha-chat-input-wrapper {
-        margin: 1.5rem auto 2rem auto;
-        max-width: 560px;     /* desktop width */
-        width: 100%;          /* mobile responsive */
+    /* --------------------------
+       CHAT INPUT (st.chat_input)
+       -------------------------- */
+
+    /* Make the whole chat input area sticky at the bottom and centered */
+    [data-testid="stChatInput"] {
+        position: sticky;
+        bottom: 0;
+        background-color: white;
+        padding-top: 0.75rem;
+        padding-bottom: 0.75rem;
+        border-top: 1px solid #f0f0f0;
+        z-index: 999;
     }
 
-    /* Remove default form frame */
-    .alpha-chat-input-wrapper [data-testid="stForm"] {
-        border: none !important;
-        background: transparent !important;
-        box-shadow: none !important;
-        padding: 0 !important;
+    /* Center and narrow the inner container */
+    [data-testid="stChatInput"] > div {
+        max-width: 720px;
+        margin-left: auto;
+        margin-right: auto;
     }
 
-    /* Input "pill" */
-    .alpha-chat-input-wrapper [data-baseweb="base-input"] {
+    /* Purple pill look for the input itself */
+    [data-testid="stChatInput"] [data-baseweb="base-input"] {
         background-color: #F6F0FF !important;
         color: #2D1B56 !important;
-        border: none !important;
         border-radius: 999px !important;
-        padding-left: 18px !important;
+        border: none !important;
         box-shadow: none !important;
+        padding-left: 16px !important;
+        padding-right: 16px !important;
     }
 
-    .alpha-chat-input-wrapper [data-baseweb="base-input"]:focus-within {
+    [data-testid="stChatInput"] [data-baseweb="base-input"]:focus-within {
         box-shadow: 0 0 0 2px #D6C3FF !important;
         border: none !important;
     }
 
-    .alpha-chat-input-wrapper input[type="text"] {
+    [data-testid="stChatInput"] input[type="text"] {
         background: transparent !important;
-        color: #2D1B56 !important;
-        font-size: 15px !important;
-    }
-
-    /* Make sure any st.text_input also keeps the pill look */
-    [data-testid="stTextInput"] > div > div {
-        background-color: #F6F0FF !important;
-        border-radius: 999px !important;
-        border: none !important;
-        box-shadow: none !important;
-    }
-
-    [data-testid="stTextInput"] input[type="text"] {
-        background-color: transparent !important;
         color: #4A2E88 !important;
         font-size: 15px !important;
     }
 
-    /* Align input + button */
-    .alpha-chat-input-wrapper [data-testid="column"] {
-        display: flex;
-        align-items: center;
-    }
-
-    /* Send button */
-    .alpha-chat-input-wrapper .stFormSubmitButton > button {
-        background-color: var(--isotopia-light) !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 50% !important;
-        width: 42px !important;
-        height: 42px !important;
-        font-size: 20px !important;
-        margin-left: 8px;
-        padding: 0 !important;
-    }
-
-    .alpha-chat-input-wrapper .stFormSubmitButton > button:hover {
-        background-color: #6A5CA8 !important;
-    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -190,9 +160,7 @@ def main():
 
     # ---------- AUTH ----------
     if APP_PASSWORD and not st.session_state.authenticated:
-        st.write("")
-        st.write("")
-        st.write("")
+        st.write("")  # a bit of spacing
 
         c1, c2, c3 = st.columns([1, 3, 1])
         with c2:
@@ -208,126 +176,107 @@ def main():
                     st.rerun()
                 else:
                     st.error("Incorrect password.")
-        return  # stop here until authenticated
+        return  # do not render the rest until authenticated
 
     # ---------- DATA ----------
     load_data_if_needed()
     df = st.session_state.consolidated_df
 
-    # ========= MAIN COLUMN ONLY =========
-    # Data badge
-    st.markdown(
-        f"<div class='data-badge'>✔ Data synced · "
-        f"{len(df):,} rows · {len(df.columns)} columns</div>",
-        unsafe_allow_html=True,
-    )
+    # Single centered column for everything
+    col = st.container()
 
-    # Small download buttons (no left sidebar)
-    if st.session_state.messages:
-        col_dl1, col_dl2 = st.columns(2)
-        export_df = pd.DataFrame(st.session_state.messages)
+    with col:
+        # Data badge
+        st.markdown(
+            f"<div class='data-badge'>✔ Data synced · "
+            f"{len(df):,} rows · {len(df.columns)} columns</div>",
+            unsafe_allow_html=True,
+        )
 
-        csv_bytes = export_df.to_csv(index=False).encode("utf-8")
-        with col_dl1:
-            st.download_button(
-                "💾 Download chat (CSV)",
-                data=csv_bytes,
-                file_name="alpha_chat.csv",
-                mime="text/csv",
-                key="download_chat_csv",
+        # Download buttons (only if there are messages)
+        if st.session_state.messages:
+            export_df = pd.DataFrame(st.session_state.messages)
+            csv_bytes = export_df.to_csv(index=False).encode("utf-8")
+
+            excel_buf = io.BytesIO()
+            with pd.ExcelWriter(excel_buf, engine="xlsxwriter") as writer:
+                export_df.to_excel(writer, index=False, sheet_name="Chat")
+
+            c1, c2 = st.columns(2)
+            with c1:
+                st.download_button(
+                    "💾 Download chat (CSV)",
+                    data=csv_bytes,
+                    file_name="alpha_chat.csv",
+                    mime="text/csv",
+                    key="download_chat_csv",
+                )
+            with c2:
+                st.download_button(
+                    "📊 Download chat (Excel)",
+                    data=excel_buf.getvalue(),
+                    file_name="alpha_chat.xlsx",
+                    mime=(
+                        "application/vnd.openxmlformats-officedocument."
+                        "spreadsheetml.sheet"
+                    ),
+                    key="download_chat_excel",
+                )
+
+        # Show existing conversation
+        for msg in st.session_state.messages:
+            role = msg.get("role", "assistant")
+            content = msg.get("content", "")
+
+            if role == "user":
+                avatar = "🧪"  # user icon
+            else:
+                avatar = "☢️"  # Alpha icon
+
+            with st.chat_message(role, avatar=avatar):
+                st.markdown(content)
+
+        # Chat input at the bottom (sticky)
+        prompt = st.chat_input(
+            "Ask a question about orders, projections, or major events…"
+        )
+
+        # ---------- PROCESS NEW QUESTION ----------
+        if prompt and prompt.strip():
+            user_text = prompt.strip()
+
+            # Save user message
+            st.session_state.messages.append({"role": "user", "content": user_text})
+
+            # Render user message immediately
+            with st.chat_message("user", avatar="🧪"):
+                st.markdown(user_text)
+
+            # Generate Alpha answer
+            with st.chat_message("assistant", avatar="☢️"):
+                try:
+                    with st.spinner("Thinking…"):
+                        raw_answer = answer_question_from_df(
+                            user_text,
+                            df,
+                            history=st.session_state.messages,
+                        )
+                except Exception as e:
+                    raw_answer = f"An error occurred: {e}"
+
+                cleaned = strip_chart_blocks(raw_answer)
+                st.markdown(cleaned)
+
+                # Try to render chart, if present
+                try:
+                    render_chart_from_answer(raw_answer)
+                except Exception:
+                    pass
+
+            # Store assistant message
+            st.session_state.messages.append(
+                {"role": "assistant", "content": cleaned}
             )
-
-        buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-            export_df.to_excel(writer, index=False, sheet_name="Chat")
-        with col_dl2:
-            st.download_button(
-                "📊 Download chat (Excel)",
-                data=buf.getvalue(),
-                file_name="alpha_chat.xlsx",
-                mime=(
-                    "application/vnd.openxmlformats-officedocument."
-                    "spreadsheetml.sheet"
-                ),
-                key="download_chat_excel",
-            )
-
-    # ---------- CHAT HISTORY ----------
-    for msg in st.session_state.messages:
-        role = msg.get("role", "assistant")
-        content = msg.get("content", "")
-        avatar = "🧪" if role == "user" else "☢️"
-
-        with st.chat_message(role, avatar=avatar):
-            st.markdown(content)
-
-    # Anchor used for scrolling
-    st.markdown('<div id="scroll-bottom"></div>', unsafe_allow_html=True)
-
-    # ---------- CHAT INPUT (BOTTOM) ----------
-    st.markdown('<div class="alpha-chat-input-wrapper">', unsafe_allow_html=True)
-    with st.form("alpha-chat-form", clear_on_submit=True):
-        col_input, col_btn = st.columns([12, 1])
-
-        with col_input:
-            prompt = st.text_input(
-                "Ask a question",
-                value="",
-                label_visibility="collapsed",
-                placeholder="Ask a question about orders, projections, or major events…",
-            )
-
-        with col_btn:
-            submitted = st.form_submit_button("➤")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # ---------- PROCESS NEW QUESTION ----------
-    if submitted and prompt.strip():
-        user_text = prompt.strip()
-
-        # Store user message
-        st.session_state.messages.append({"role": "user", "content": user_text})
-
-        # Show user message immediately
-        with st.chat_message("user", avatar="🧪"):
-            st.markdown(user_text)
-
-        # Alpha answer
-        with st.chat_message("assistant", avatar="☢️"):
-            try:
-                with st.spinner("Thinking…"):
-                    raw_answer = answer_question_from_df(
-                        user_text,
-                        df,
-                        history=st.session_state.messages,
-                    )
-            except Exception as e:
-                raw_answer = f"An error occurred: {e}"
-
-            cleaned = strip_chart_blocks(raw_answer)
-            st.markdown(cleaned)
-
-            # Try to render chart if present
-            try:
-                render_chart_from_answer(raw_answer)
-            except Exception as e:
-                st.caption(f"⚠️ Chart error: {e}")
-
-        # Store assistant message
-        st.session_state.messages.append({"role": "assistant", "content": cleaned})
-
-    # ---------- AUTO SCROLL TO BOTTOM ----------
-    st.markdown(
-        """
-        <script>
-        const bottom = document.getElementById("scroll-bottom");
-        if (bottom) {
-            bottom.scrollIntoView({behavior: "smooth", block: "end"});
-        }
-        </script>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 if __name__ == "__main__":
