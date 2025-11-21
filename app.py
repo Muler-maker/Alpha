@@ -46,6 +46,16 @@ st.markdown(
         --isotopia-light:   #9C8AD0;
     }
 
+    body, .main {
+        background-color: #FFFFFF !important;
+    }
+
+    /* Center the data badge so it aligns with the chat */
+    .data-badge-wrapper {
+        text-align: center;
+        margin-bottom: 0.5rem;
+    }
+
     .data-badge {
         background-color: #E8F7E4;
         color: #267c3b;
@@ -53,22 +63,20 @@ st.markdown(
         border-radius: 8px;
         font-size: 13px;
         display: inline-block;
-        margin-top: 10px;
-        margin-bottom: 12px;
     }
 
     /* --------------------------
        CHAT INPUT (st.chat_input)
        -------------------------- */
 
-    /* Make the whole chat input area sticky at the bottom and centered */
+    /* Make the area transparent, no grey strip */
     [data-testid="stChatInput"] {
         position: sticky;
         bottom: 0;
-        background-color: white;
+        background-color: transparent !important;
         padding-top: 0.75rem;
         padding-bottom: 0.75rem;
-        border-top: 1px solid #f0f0f0;
+        border-top: none !important;
         z-index: 999;
     }
 
@@ -84,7 +92,7 @@ st.markdown(
         background-color: #F6F0FF !important;
         color: #2D1B56 !important;
         border-radius: 999px !important;
-        border: none !important;
+        border: 1px solid #F0E8FF !important;
         box-shadow: none !important;
         padding-left: 16px !important;
         padding-right: 16px !important;
@@ -92,7 +100,7 @@ st.markdown(
 
     [data-testid="stChatInput"] [data-baseweb="base-input"]:focus-within {
         box-shadow: 0 0 0 2px #D6C3FF !important;
-        border: none !important;
+        border: 1px solid #D6C3FF !important;
     }
 
     [data-testid="stChatInput"] input[type="text"] {
@@ -100,7 +108,6 @@ st.markdown(
         color: #4A2E88 !important;
         font-size: 15px !important;
     }
-
 </style>
 """,
     unsafe_allow_html=True,
@@ -160,8 +167,7 @@ def main():
 
     # ---------- AUTH ----------
     if APP_PASSWORD and not st.session_state.authenticated:
-        st.write("")  # a bit of spacing
-
+        st.write("")  # spacing
         c1, c2, c3 = st.columns([1, 3, 1])
         with c2:
             pwd = st.text_input(
@@ -176,20 +182,21 @@ def main():
                     st.rerun()
                 else:
                     st.error("Incorrect password.")
-        return  # do not render the rest until authenticated
+        return
 
     # ---------- DATA ----------
     load_data_if_needed()
     df = st.session_state.consolidated_df
 
-    # Single centered column for everything
-    col = st.container()
+    # Single centered container
+    container = st.container()
 
-    with col:
-        # Data badge
+    with container:
+        # Data badge (centered)
         st.markdown(
-            f"<div class='data-badge'>✔ Data synced · "
-            f"{len(df):,} rows · {len(df.columns)} columns</div>",
+            f"<div class='data-badge-wrapper'>"
+            f"<span class='data-badge'>✔ Data synced · {len(df):,} rows · {len(df.columns)} columns</span>"
+            f"</div>",
             unsafe_allow_html=True,
         )
 
@@ -228,15 +235,22 @@ def main():
             role = msg.get("role", "assistant")
             content = msg.get("content", "")
 
-            if role == "user":
-                avatar = "🧪"  # user icon
-            else:
-                avatar = "☢️"  # Alpha icon
-
+            avatar = "🧪" if role == "user" else "☢️"
             with st.chat_message(role, avatar=avatar):
                 st.markdown(content)
 
-        # Chat input at the bottom (sticky)
+        # --- Auto-scroll to bottom after rendering messages ---
+        st.markdown(
+            """
+            <script>
+            const main = window.parent.document.querySelector('section.main');
+            if (main) { main.scrollTop = main.scrollHeight; }
+            </script>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Chat input at the bottom (sticky via CSS)
         prompt = st.chat_input(
             "Ask a question about orders, projections, or major events…"
         )
@@ -245,14 +259,12 @@ def main():
         if prompt and prompt.strip():
             user_text = prompt.strip()
 
-            # Save user message
+            # Save + show user message
             st.session_state.messages.append({"role": "user", "content": user_text})
-
-            # Render user message immediately
             with st.chat_message("user", avatar="🧪"):
                 st.markdown(user_text)
 
-            # Generate Alpha answer
+            # Alpha answer
             with st.chat_message("assistant", avatar="☢️"):
                 try:
                     with st.spinner("Thinking…"):
@@ -267,7 +279,7 @@ def main():
                 cleaned = strip_chart_blocks(raw_answer)
                 st.markdown(cleaned)
 
-                # Try to render chart, if present
+                # Try to render chart if present
                 try:
                     render_chart_from_answer(raw_answer)
                 except Exception:
