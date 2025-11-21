@@ -61,13 +61,11 @@ st.markdown(
        CUSTOM CHAT FORM STYLING (FINAL)
        ========================== */
 
-    /* Wrapper for the whole chat input block:
-       - centered
-       - limited width so it’s not full-screen */
+    /* Centered and shortened chat input */
     .alpha-chat-input-wrapper {
         margin: 2rem auto 2.5rem auto;
-        max-width: 480px;          /* <<< main knob: shorten / widen chat bar */
-        width: 100%;               /* responsive on mobile */
+        max-width: 400px;          /* <<< NEW WIDTH */
+        width: 100%;
     }
 
     /* Remove outer form frame */
@@ -78,17 +76,17 @@ st.markdown(
         padding: 0 !important;
     }
 
-    /* CHAT INPUT: rounded, very light purple */
+    /* Chat input styling */
     .alpha-chat-input-wrapper [data-baseweb="base-input"] {
-        background-color: #F6F0FF !important;      /* very light purple */
+        background-color: #F6F0FF !important;
         color: #2D1B56 !important;
         border: none !important;
-        border-radius: 999px !important;           /* pill shape */
+        border-radius: 999px !important;
         box-shadow: none !important;
         padding-left: 18px !important;
     }
 
-    /* Subtle focus ring */
+    /* Focus ring */
     .alpha-chat-input-wrapper [data-baseweb="base-input"]:focus-within {
         box-shadow: 0 0 0 2px #D6C3FF !important;
         border: none !important;
@@ -101,7 +99,7 @@ st.markdown(
         font-size: 15px !important;
     }
 
-    /* SEND BUTTON — purple circle */
+    /* Send button */
     .alpha-chat-input-wrapper .stFormSubmitButton > button {
         background-color: var(--isotopia-light) !important;
         color: white !important;
@@ -124,7 +122,7 @@ st.markdown(
         align-items: center;
     }
 
-    /* Force chat text input to brand style */
+    /* Enforce pill look on text input */
     [data-testid="stTextInput"] > div > div {
         background-color: #F6F0FF !important;
         border-radius: 999px !important;
@@ -138,7 +136,7 @@ st.markdown(
         font-size: 15px !important;
     }
 
-    /* Remove any outer white rounded frame around the form */
+    /* Remove remaining outer frames */
     .alpha-chat-input-wrapper [data-testid="stForm"] > div {
         border: none !important;
         box-shadow: none !important;
