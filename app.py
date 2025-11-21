@@ -1,6 +1,6 @@
 import os
-import json
 import io
+import json
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
@@ -18,10 +18,17 @@ from query_engine import answer_question_from_df
 # 🔧 ENV + API
 # ================================
 load_dotenv()
-OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", None)
-APP_PASSWORD = st.secrets.get("APP_PASSWORD", "")
+
+OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
+APP_PASSWORD = st.secrets.get("APP_PASSWORD", os.getenv("APP_PASSWORD", ""))
 
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
+st.set_page_config(
+    page_title="Alpha – Theranostics Engine",
+    page_icon="🧬",
+    layout="wide",
+)
 
 
 # ================================
@@ -119,10 +126,23 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
+# ================================
+# ⚙️ STATE
+# ================================
+def init_state():
+    ss = st.session_state
+    if "messages" not in ss:
+        ss.messages = []
+    if "data_loaded" not in ss:
+        ss.data_loaded = False
+    if "authenticated" not in ss:
+        ss.authenticated = False
+
+
 # ================================
 # 🧩 LOAD DATA
 # ================================
-def init_state():
 def load_data_if_needed():
     if st.session_state.data_loaded:
         return
@@ -130,8 +150,8 @@ def load_data_if_needed():
     with st.spinner("Loading latest data from Google Sheets…"):
         raw_orders = load_orders()
         orders_df = preprocess_orders(raw_orders)
-        proj_df   = load_projection()
-        meta_df   = load_metadata()
+        proj_df = load_projection()
+        meta_df = load_metadata()
 
         consolidated = build_consolidated_df(orders_df, proj_df, meta_df)
 
@@ -159,7 +179,7 @@ def main():
     # Always show logo
     render_header()
 
-    # ---------------- AUTH ----------------
+    # -------- AUTH --------
     if APP_PASSWORD and not st.session_state.authenticated:
         st.write("")
         st.write("")
@@ -181,22 +201,25 @@ def main():
                     st.error("Incorrect password.")
         return
 
-    # If no password or authenticated:
+    # -------- DATA --------
     load_data_if_needed()
     df = st.session_state.consolidated_df
 
     # Layout: left exports, right chat
     left, right = st.columns([1.1, 4], gap="large")
 
-    # ---------------- RIGHT SIDE: CHAT ----------------
+    # ---------- RIGHT: CHAT ----------
     with right:
         st.markdown(
-            f"<div class='data-badge'>✔ Data synced · {len(df):,} rows · {len(df.columns)} columns</div>",
+            f"<div class='data-badge'>✔ Data synced · "
+            f"{len(df):,} rows · {len(df.columns)} columns</div>",
             unsafe_allow_html=True,
         )
 
+        # show previous messages
         for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
+            role = msg.get("role", "assistant")
+            with st.chat_message(role):
                 st.markdown(msg["content"])
 
         # Chat input
@@ -213,8 +236,8 @@ def main():
                 submitted = st.form_submit_button("➤")
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # ---------------- PROCESS QUESTIONS ----------------
-    if submitted and prompt.strip():
+    # ---------- PROCESS QUESTION ----------
+    if "submitted" in locals() and submitted and prompt.strip():
         txt = prompt.strip()
         st.session_state.messages.append({"role": "user", "content": txt})
 
@@ -222,7 +245,9 @@ def main():
             with st.chat_message("assistant"):
                 try:
                     reply = answer_question_from_df(
-                        txt, df, history=st.session_state.messages
+                        txt,
+                        df,
+                        history=st.session_state.messages,
                     )
                 except Exception as e:
                     reply = f"Error: {e}"
@@ -232,12 +257,12 @@ def main():
 
                 try:
                     render_chart_from_answer(reply)
-                except:
+                except Exception:
                     pass
 
         st.session_state.messages.append({"role": "assistant", "content": cleaned})
 
-    # ---------------- LEFT SIDE: EXPORTS ----------------
+    # ---------- LEFT: EXPORTS ----------
     with left:
         if st.session_state.messages:
             st.caption("Current session")
@@ -245,7 +270,7 @@ def main():
             export_df = pd.DataFrame(st.session_state.messages)
 
             # CSV
-            csv_bytes = export_df.to_csv(index=False).encode()
+            csv_bytes = export_df.to_csv(index=False).encode("utf-8")
             st.download_button(
                 "💾 Download chat (CSV)",
                 data=csv_bytes,
@@ -256,12 +281,15 @@ def main():
             # Excel
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-                export_df.to_excel(writer, index=False)
+                export_df.to_excel(writer, index=False, sheet_name="Chat")
             st.download_button(
                 "📊 Download chat (Excel)",
                 data=buf.getvalue(),
                 file_name="alpha_chat.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
             )
 
 
