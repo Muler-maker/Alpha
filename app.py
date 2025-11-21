@@ -40,7 +40,7 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-    /* Main content width + top padding - fix image cutoff */
+    /* Main content width + top padding */
     .block-container {
         padding-top: 1rem;
         max-width: 1100px;
@@ -97,28 +97,35 @@ st.markdown(
         border-radius: 999px !important;
         border: 1px solid #E0D0FF !important;
         display: flex !important;
+        flex-wrap: nowrap !important;
         align-items: center !important;
+        justify-content: space-between !important;
         padding: 4px 4px 4px 16px !important;
         gap: 8px !important;
         position: relative !important;
     }
 
-    /* Input column */
-    [data-testid="stForm"] [data-testid="column"]:first-child {
+    /* Input column (FIRST stColumn) */
+    [data-testid="stForm"] [data-testid="stHorizontalBlock"] [data-testid="stColumn"]:first-child {
         flex: 1 1 auto !important;
         background: transparent !important;
         min-width: 0 !important;
+        display: flex !important;
+        align-items: center !important;
     }
 
-    /* Button column (desktop default) */
-    [data-testid="stForm"] [data-testid="column"]:last-child {
+    /* Button column (LAST stColumn) */
+    [data-testid="stForm"] [data-testid="stHorizontalBlock"] [data-testid="stColumn"]:last-child {
         flex: 0 0 auto !important;
         width: 38px !important;
         min-width: 38px !important;
         background: transparent !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-end !important;
     }
 
-    /* Input wrapper transparent */
+    /* Target the text input wrapper */
     [data-testid="stForm"] [data-testid="stTextInput"],
     [data-testid="stForm"] [data-testid="stTextInput"] > div,
     [data-testid="stForm"] [data-testid="stTextInput"] > div > div {
@@ -126,7 +133,7 @@ st.markdown(
         border: none !important;
     }
 
-    /* Input field */
+    /* Target the text input - make it transparent */
     [data-testid="stForm"] [data-testid="stTextInput"] input {
         background: transparent !important;
         border: none !important;
@@ -137,18 +144,18 @@ st.markdown(
         width: 100% !important;
     }
 
-    /* Placeholder */
+    /* Fix placeholder text */
     [data-testid="stForm"] [data-testid="stTextInput"] input::placeholder {
         color: #9CA3AF !important;
         opacity: 0.7 !important;
     }
 
     /* ================================
-       FINAL MOBILE FIX (≤ 768px)
+       MOBILE TWEAKS (≤ 768px)
        ================================ */
     @media (max-width: 768px) {
 
-        /* Fix logo cropping */
+        /* Prevent logo cutoff + give margin on sides */
         .block-container {
             padding-top: 2.2rem !important;
             max-width: 100% !important;
@@ -156,58 +163,14 @@ st.markdown(
             padding-right: 1rem !important;
         }
 
-        /* Purple pill container */
-        [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
-            width: 100% !important;
-            padding: 6px 52px 6px 16px !important; /* reserve space on right for button */
-            position: relative !important;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: flex-start !important;
-        }
-
-        /* Input column expands fully */
-        [data-testid="stForm"] [data-testid="column"]:first-child {
-            flex: 1 1 auto !important;
-            min-width: 0 !important;
-        }
-
-        /* Button column = ABSOLUTE inside the purple pill */
-        [data-testid="stForm"] [data-testid="column"]:last-child {
-            position: absolute !important;
-            top: 50% !important;
-            right: 8px !important;
-            transform: translateY(-50%) !important;
-            flex: 0 0 auto !important;
-            width: auto !important;
-            min-width: 0 !important;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            margin: 0 !important;
-        }
-
-        /* Clean internal wrappers */
-        [data-testid="stForm"] [data-testid="column"]:last-child * {
-            margin: 0 !important;
-        }
-
-        /* Mobile button size */
-        [data-testid="stForm"] button {
-            width: 38px !important;
-            height: 38px !important;
-            min-width: 38px !important;
-            min-height: 38px !important;
-        }
-
-        /* Input font size */
+        /* Slightly smaller font & more vertical padding */
         [data-testid="stForm"] [data-testid="stTextInput"] input {
             font-size: 14px !important;
             padding-top: 10px !important;
             padding-bottom: 10px !important;
         }
 
-        /* Footer alignment */
+        /* Make footer wrapper respect screen width */
         .alpha-chat-footer-inner,
         .alpha-chat-input-wrapper {
             width: 100% !important;
@@ -223,7 +186,7 @@ st.markdown(
         background: transparent !important;
     }
 
-    /* Submit button (desktop + mobile) */
+    /* Style the submit button as a circle with purple background */
     [data-testid="stForm"] button[kind="primary"],
     [data-testid="stForm"] button[type="submit"],
     [data-testid="stForm"] button {
@@ -235,38 +198,92 @@ st.markdown(
         height: 38px !important;
         min-width: 38px !important;
         min-height: 38px !important;
+        padding: 0 !important;
+        box-shadow: none !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
         margin: 0 !important;
-        padding: 0 !important;
-        box-shadow: none !important;
     }
 
+    [data-testid="stForm"] button[kind="primary"]:hover,
+    [data-testid="stForm"] button[type="submit"]:hover,
     [data-testid="stForm"] button:hover {
         background-color: #6A5CA8 !important;
     }
 
-    /* Remove backgrounds around button */
-    [data-testid="stForm"] [data-testid="column"]:last-child > div {
+    /* Remove any button wrapper backgrounds */
+    [data-testid="stForm"] [data-testid="stHorizontalBlock"] [data-testid="stColumn"]:last-child > div {
         background: transparent !important;
     }
 
-    /* Remove background from button children */
+    /* Target ALL elements inside button with transparent bg */
     [data-testid="stForm"] button *,
     [data-testid="stForm"] button > * {
         background-color: transparent !important;
+        background: transparent !important;
     }
 
-    /* Icon text */
+    /* Style button icon - grey arrow */
     [data-testid="stForm"] button p {
         margin: 0 !important;
         font-size: 16px !important;
-        color: #6B7280 !important;
         line-height: 1 !important;
+        color: #6B7280 !important;
+        background: transparent !important;
     }
 
+    /* ==========================
+       Original st.chat_input styling (kept for reference)
+       ========================== */
+
+    /* Kill the grey outer bar */
+    [data-testid="stChatInput"] {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+
+    /* Inner wrapper (also grey by default) */
+    [data-testid="stChatInput"] > div {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+
+    /* Actual input pill */
+    [data-testid="stChatInput"] [data-baseweb="base-input"] {
+        background-color: #F6F0FF !important;   /* light purple */
+        border-radius: 999px !important;
+        border: 1px solid #E0D0FF !important;
+        box-shadow: none !important;
+        padding-left: 18px !important;
+    }
+
+    /* Text inside input */
+    [data-testid="stChatInput"] input,
+    [data-testid="stChatInput"] textarea {
+        background: transparent !important;
+        color: #2D1B56 !important;
+        font-size: 15px !important;
+    }
+
+    /* Send button – purple circle */
+    [data-testid="stChatInput"] button[kind="primary"] {
+        background-color: var(--isotopia-light) !important;
+        color: #FFFFFF !important;
+        border-radius: 999px !important;
+        border: none !important;
+        width: 40px !important;
+        height: 40px !important;
+        box-shadow: none !important;
+    }
+
+    [data-testid="stChatInput"] button[kind="primary"]:hover {
+        background-color: #6A5CA8 !important;
+    }
 </style>
+
 """,
     unsafe_allow_html=True,
 )
