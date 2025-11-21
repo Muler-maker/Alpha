@@ -139,7 +139,27 @@ st.markdown(
     box-shadow: none !important;
     background: transparent !important;
     }
+    /* REMOVE the outer white rounded frame around the form */
+    .alpha-chat-input-wrapper [data-testid="stForm"] > div:first-child {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    }
 
+    /* Also remove its parent container frame */
+    .alpha-chat-input-wrapper [data-testid="stForm"] div[data-testid="baseButton-header"] {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    }
+
+    /* Final nuke — removes the outermost container of the form */
+    .alpha-chat-input-wrapper div[data-testid="stForm"] > div {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    }
 </style>
 """,
     unsafe_allow_html=True,
