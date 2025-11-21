@@ -143,6 +143,19 @@ st.markdown(
         background: transparent !important;
         padding: 0 !important;
     }
+    /* FORCE the main container to be narrow */
+    div[data-testid="stVerticalBlock"] {
+    max-width: 480px !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    }
+
+    /* Make the chat card actually shrink */
+    .alpha-chat-input-wrapper {
+    max-width: 480px !important;
+    width: 90% !important;
+    margin: 1.5rem auto 2rem auto !important;
+    }
 </style>
 
 """,
