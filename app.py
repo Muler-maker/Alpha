@@ -40,7 +40,28 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-    /* Main content width + top padding */
+    /* =======================================
+       MAIN APP & LOGO FIX
+       ======================================= */
+    /*
+     This is the key fix for the cut-off logo. It adds padding to the top
+     of the entire Streamlit app view, pushing all content (including your logo)
+     down so it's fully visible.
+    */
+    [data-testid="stAppViewContainer"] {
+        padding-top: 2rem !important;
+    }
+
+    /* General responsive rule for images to prevent overflow */
+    .stApp [data-testid="stImage"] img {
+        max-width: 100% !important;
+        height: auto !important;
+    }
+
+
+    /* =======================================
+       YOUR EXISTING STYLES (with minor tweaks)
+       ======================================= */
     .block-container {
         padding-top: 0.5rem;
         max-width: 1100px;
@@ -61,10 +82,6 @@ st.markdown(
         margin-top: 10px;
         margin-bottom: 18px;
     }
-
-    /* ==========================
-       Form-based chat input styling
-       ========================== */
     
     [data-testid="stForm"] {
         border: none !important;
@@ -77,7 +94,6 @@ st.markdown(
         border: none !important;
     }
     
-    /* Hide the "Press Enter to submit form" message */
     [data-testid="stForm"] [data-testid="InputInstructions"] {
         display: none !important;
     }
@@ -117,7 +133,7 @@ st.markdown(
         border: none !important;
     }
     
-    /* Target the text input - this is a key part of the fix */
+    /* Input field - Desktop */
     [data-testid="stForm"] [data-testid="stTextInput"] input {
         background: transparent !important;
         border: none !important;
@@ -126,10 +142,8 @@ st.markdown(
         color: #2D1B56 !important;
         box-shadow: none !important;
         width: 100% !important;
-        /* Ensures the text doesn't overflow its container */
-        text-overflow: ellipsis;
-        overflow: hidden;
-        white-space: nowrap;
+        /* Prevents text from breaking into a new line */
+        white-space: nowrap; 
     }
     
     [data-testid="stForm"] [data-testid="stTextInput"] input:focus {
@@ -186,38 +200,25 @@ st.markdown(
     }
     
     /* =======================================
-       MOBILE-SPECIFIC OVERRIDES (The Fix)
+       MOBILE-SPECIFIC OVERRIDES
        ======================================= */
     @media (max-width: 768px) {
         /*
-         This rule targets the input field only on screens 768px or smaller.
-         It reduces the padding on the left and right to give the text more
-         room to breathe, preventing it from being cut off.
+         Fix for the truncated text. We remove the text-overflow behavior
+         and adjust padding to make sure the text actually fits.
         */
         [data-testid="stForm"] [data-testid="stTextInput"] input {
-            padding: 8px 45px 8px 12px !important;
+            padding-right: 48px !important; /* Ensure enough space for the button */
+            padding-left: 14px !important;
+            /* These properties allow the text to be seen if it overflows */
+            overflow: visible !important;
+            text-overflow: clip !important;
         }
 
-        /*
-         This rule slightly adjusts the button's position from the right edge
-         to ensure it aligns nicely within the container on mobile.
-        */
+        /* Minor button position adjustment for mobile */
         [data-testid="stForm"] [data-testid="column"]:last-child {
             right: 6px !important;
         }
-    }
-
-    /* =======================================
-       RESPONSIVE LOGO (General Fix)
-       ======================================= */
-    /*
-     This is a general fix for images. You may need to inspect your app
-     to find the correct selector for your logo, but it's often inside
-     a div with a class like 'stApp'.
-    */
-    .stApp [data-testid="stImage"] img {
-        max-width: 100% !important;
-        height: auto !important;
     }
 
 </style>
