@@ -210,15 +210,18 @@ def render_header():
 def main():
     init_state()
 
+    # ✅ Always show header (logo) at the top
+    render_header()
+
     # -------- AUTH --------
     if APP_PASSWORD and not st.session_state.authenticated:
         col_l, col_c, col_r = st.columns([1, 3, 1])
         with col_c:
-            st.write("Enter password")
             pwd = st.text_input(
                 "Password",
                 type="password",
                 label_visibility="collapsed",
+                placeholder="Enter password",
             )
 
             if pwd:
@@ -248,10 +251,10 @@ def main():
         st.error("Could not load consolidated data.")
         return
 
-    # Layout: left Chats panel + main content
+    # Layout: left exports panel + main chat content
     side_col, main_col = st.columns([1.1, 4], gap="large")
 
-    # MAIN CONTENT
+    # ---------- MAIN CHAT COLUMN ----------
     with main_col:
         # Data badge
         st.markdown(
@@ -286,18 +289,15 @@ def main():
                 submitted = st.form_submit_button("➤")
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # -------- PROCESS NEW QUESTION (updates state before sidebar exports) --------
+    # -------- PROCESS NEW QUESTION --------
     if submitted and prompt.strip():
         user_input = prompt.strip()
-
-        # Add user message to history
         st.session_state.messages.append({"role": "user", "content": user_input})
 
         with main_col:
             with st.chat_message("user", avatar="🧪"):
                 st.markdown(user_input)
 
-            # Assistant reply
             with st.chat_message("assistant", avatar="☢️"):
                 try:
                     with st.spinner("Thinking…"):
@@ -317,20 +317,17 @@ def main():
                 except Exception as e:
                     st.caption(f"⚠️ Chart error: {e}")
 
-        # Add assistant message to history
         st.session_state.messages.append({"role": "assistant", "content": cleaned})
 
-    # LEFT PANEL (runs after messages are updated, so exports are up to date)
+    # ---------- LEFT EXPORTS COLUMN ----------
     with side_col:
-
         if st.session_state.messages:
             st.caption("Current session")
 
-            # Build a simple table: role + message
             df_chat = pd.DataFrame(st.session_state.messages)
             df_chat = df_chat.rename(columns={"role": "Role", "content": "Message"})
 
-            # --- CSV download ---
+            # CSV download
             csv_bytes = df_chat.to_csv(index=False).encode("utf-8")
             st.download_button(
                 "💾 Download chat (CSV)",
@@ -340,7 +337,7 @@ def main():
                 key="download_chat_csv",
             )
 
-            # --- Excel download ---
+            # Excel download
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
                 df_chat.to_excel(writer, index=False, sheet_name="Chat")
@@ -356,6 +353,7 @@ def main():
                 ),
                 key="download_chat_excel",
             )
+
 
 
 
