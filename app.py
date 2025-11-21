@@ -210,10 +210,6 @@ def render_header():
 def main():
     init_state()
 
-    # Always show header
-    render_header()
-    st.caption(f"GPT client active: {client is not None}")
-
     # -------- AUTH --------
     if APP_PASSWORD and not st.session_state.authenticated:
         col_l, col_c, col_r = st.columns([1, 3, 1])
@@ -326,7 +322,6 @@ def main():
 
     # LEFT PANEL (runs after messages are updated, so exports are up to date)
     with side_col:
-        st.markdown("<div class='sidebar-title'>Chats</div>", unsafe_allow_html=True)
 
         if st.session_state.messages:
             st.caption("Current session")
@@ -361,11 +356,7 @@ def main():
                 ),
                 key="download_chat_excel",
             )
-        else:
-            st.caption("No messages yet.")
 
-        st.markdown("---")
-        st.caption("Previous chats (coming soon)")
 
 
 if __name__ == "__main__":
