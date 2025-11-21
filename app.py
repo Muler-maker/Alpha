@@ -1,5 +1,9 @@
+I also need to centralize the box. You also removed my customized icons for the human and chat. 
+Can you please fix the entire script? 
+
 import os
 import io
+import json
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
@@ -35,62 +39,129 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-    /* ================================
-       ALPHA CHAT INPUT — CLEAN RESET
-    ================================== */
+    .block-container {
+        padding-top: 0.5rem;
+        max-width: 1100px;
+    }
 
-    /* Wrapper centered + wide */
+    :root {
+        --isotopia-primary: #4A2E88;
+        --isotopia-light:   #9C8AD0;
+    }
+
+    .data-badge {
+        background-color: #E8F7E4;
+        color: #267c3b;
+        padding: 6px 14px;
+        border-radius: 8px;
+        font-size: 13px;
+        display: inline-block;
+        margin-top: 10px;
+        margin-bottom: 18px;
+    }
+
+    /* ==========================
+       CUSTOM CHAT FORM STYLING (FINAL)
+       ========================== */
+
     .alpha-chat-input-wrapper {
-        margin: 2rem auto 2rem auto;
-        max-width: 900px;         /* wider */
+        margin: 2rem auto 2.5rem auto;
+        max-width: 720px;
         width: 100%;
     }
 
-    /* Remove ALL outer white frame around st.form */
+    /* Remove outer form frame */
     .alpha-chat-input-wrapper [data-testid="stForm"] {
-        background: transparent !important;
         border: none !important;
+        background: transparent !important;
         box-shadow: none !important;
         padding: 0 !important;
     }
 
-    /* Remove the invisible border container Streamlit adds */
-    .alpha-chat-input-wrapper [data-testid="stForm"] > div {
-        background: transparent !important;
+    /* CHAT INPUT: Rounded, very light purple */
+    .alpha-chat-input-wrapper [data-baseweb="base-input"] {
+        background-color: #F6F0FF !important;      /* very light purple */
+        color: #2D1B56 !important;
         border: none !important;
+        border-radius: 999px !important;           /* pill shape */
         box-shadow: none !important;
-        padding: 0 !important;
+        padding-left: 18px !important;
     }
 
-    /* Force text input pill shape and purple background */
-    .alpha-chat-input-wrapper [data-testid="stTextInput"] > div > div {
-        background-color: #F6F0FF !important;   /* light purple */
-        border-radius: 999px !important;
+    /* Subtle focus ring */
+    .alpha-chat-input-wrapper [data-baseweb="base-input"]:focus-within {
+        box-shadow: 0 0 0 2px #D6C3FF !important;
         border: none !important;
-        box-shadow: none !important;
     }
 
-    /* Input text styling */
+    /* Inner text */
     .alpha-chat-input-wrapper input[type="text"] {
-        background-color: transparent !important;
-        color: #4A2E88 !important;              /* brand purple */
-        font-size: 16px !important;
-        padding-left: 14px !important;
+        background: transparent !important;
+        color: #2D1B56 !important;
+        font-size: 15px !important;
     }
 
-    /* Send button */
+    /* SEND BUTTON — purple circle */
     .alpha-chat-input-wrapper .stFormSubmitButton > button {
-        background-color: #9C8AD0 !important;
+        background-color: var(--isotopia-light) !important;
         color: white !important;
-        border-radius: 50% !important;
         border: none !important;
+        border-radius: 50% !important;
         width: 42px !important;
         height: 42px !important;
         font-size: 20px !important;
+        padding: 0 !important;
         margin-left: 8px;
     }
+
     .alpha-chat-input-wrapper .stFormSubmitButton > button:hover {
-        background-color: #7E6BB8 !important;
+        background-color: #6A5CA8 !important;
+    }
+
+    /* Align input + button */
+    .alpha-chat-input-wrapper [data-testid="column"] {
+        display: flex;
+        align-items: center;
+    }
+        /* FORCE CHAT TEXT INPUT TO BRAND STYLE */
+    [data-testid="stTextInput"] > div > div {
+        background-color: #F6F0FF !important;      /* very light purple */
+        border-radius: 999px !important;           /* pill shape */
+        border: none !important;                   /* no frame */
+        box-shadow: none !important;
+    }
+
+    [data-testid="stTextInput"] input[type="text"] {
+        background-color: transparent !important;
+        color: #4A2E88 !important;                 /* brand purple text */
+        font-size: 15px !important;
+    }
+    /* REMOVE OUTER FRAME COMPLETELY */
+    .alpha-chat-input-wrapper [data-testid="stForm"] > div {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    }
+    /* REMOVE the outer white rounded frame around the form */
+    .alpha-chat-input-wrapper [data-testid="stForm"] > div:first-child {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    }
+
+    /* Also remove its parent container frame */
+    .alpha-chat-input-wrapper [data-testid="stForm"] div[data-testid="baseButton-header"] {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    }
+
+    /* Final nuke — removes the outermost container of the form */
+    .alpha-chat-input-wrapper div[data-testid="stForm"] > div {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
     }
 </style>
 """,
@@ -137,7 +208,6 @@ def load_data_if_needed():
 # ================================
 def render_header():
     logo = Image.open("Isotopia.jpg")
-    # Center logo naturally within the main container
     st.image(logo, use_container_width=True)
 
 
@@ -176,98 +246,93 @@ def main():
     load_data_if_needed()
     df = st.session_state.consolidated_df
 
-    # ---------- BADGE ----------
-    st.markdown(
-        f"<div class='alpha-badge-wrapper'>"
-        f"<span class='data-badge'>✔ Data synced · {len(df):,} rows · {len(df.columns)} columns</span>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
+    # Layout: left exports, right chat
+    left, right = st.columns([1.1, 4], gap="large")
 
-    # ---------- CHAT HISTORY ----------
-    for msg in st.session_state.messages:
-        role = msg.get("role", "assistant")
-        avatar = "🧪" if role == "user" else "☢️"
-        with st.chat_message(role, avatar=avatar):
-            st.markdown(msg["content"])
+    # ---------- RIGHT: CHAT ----------
+    with right:
+        st.markdown(
+            f"<div class='data-badge'>✔ Data synced · "
+            f"{len(df):,} rows · {len(df.columns)} columns</div>",
+            unsafe_allow_html=True,
+        )
 
-    # ---------- CHAT INPUT ----------
-    st.markdown('<div class="alpha-chat-input-wrapper">', unsafe_allow_html=True)
-    with st.form("alpha-chat-form", clear_on_submit=True):
-        col_in, col_btn = st.columns([12, 1])
-        with col_in:
-            prompt = st.text_input(
-                "",
-                placeholder="Ask a question about orders, projections, or major events…",
-                label_visibility="collapsed",
-            )
-        with col_btn:
-            submitted = st.form_submit_button("➤")
-    st.markdown("</div>", unsafe_allow_html=True)
+        # show previous messages
+        for msg in st.session_state.messages:
+            role = msg.get("role", "assistant")
+            with st.chat_message(role):
+                st.markdown(msg["content"])
+
+        # Chat input
+        st.markdown('<div class="alpha-chat-input-wrapper">', unsafe_allow_html=True)
+        with st.form("alpha-chat-form", clear_on_submit=True):
+            col_in, col_btn = st.columns([12, 1])
+            with col_in:
+                prompt = st.text_input(
+                    "",
+                    placeholder="Ask a question about orders, projections, or major events…",
+                    label_visibility="collapsed",
+                )
+            with col_btn:
+                submitted = st.form_submit_button("➤")
+        st.markdown("</div>", unsafe_allow_html=True)
 
     # ---------- PROCESS QUESTION ----------
-    if submitted and prompt.strip():
-        txt = prompt.strip()
+    if "send_clicked" in locals() and send_clicked and prompt.strip():
 
-        # Store user message
+        txt = prompt.strip()
         st.session_state.messages.append({"role": "user", "content": txt})
 
-        avatar_user = "🧪"
-        avatar_assistant = "☢️"
+        with right:
+            with st.chat_message("assistant"):
+                try:
+                    reply = answer_question_from_df(
+                        txt,
+                        df,
+                        history=st.session_state.messages,
+                    )
+                except Exception as e:
+                    reply = f"Error: {e}"
 
-        # Echo user message immediately
-        with st.chat_message("user", avatar=avatar_user):
-            st.markdown(txt)
+                cleaned = strip_chart_blocks(reply)
+                st.markdown(cleaned)
 
-        # Assistant reply
-        with st.chat_message("assistant", avatar=avatar_assistant):
-            try:
-                reply = answer_question_from_df(
-                    txt,
-                    df,
-                    history=st.session_state.messages,
-                )
-            except Exception as e:
-                reply = f"Error: {e}"
+                try:
+                    render_chart_from_answer(reply)
+                except Exception:
+                    pass
 
-            cleaned = strip_chart_blocks(reply)
-            st.markdown(cleaned)
-
-            try:
-                render_chart_from_answer(reply)
-            except Exception:
-                pass
-
-        # Save assistant message
         st.session_state.messages.append({"role": "assistant", "content": cleaned})
 
-    # ---------- DOWNLOADS ----------
-    if st.session_state.messages:
-        st.markdown("### Download current chat")
-        export_df = pd.DataFrame(st.session_state.messages)
+    # ---------- LEFT: EXPORTS ----------
+    with left:
+        if st.session_state.messages:
+            st.caption("Current session")
 
-        # CSV
-        csv_bytes = export_df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "💾 Download chat (CSV)",
-            data=csv_bytes,
-            file_name="alpha_chat.csv",
-            mime="text/csv",
-        )
+            export_df = pd.DataFrame(st.session_state.messages)
 
-        # Excel
-        buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-            export_df.to_excel(writer, index=False, sheet_name="Chat")
-        st.download_button(
-            "📊 Download chat (Excel)",
-            data=buf.getvalue(),
-            file_name="alpha_chat.xlsx",
-            mime=(
-                "application/vnd.openxmlformats-officedocument."
-                "spreadsheetml.sheet"
-            ),
-        )
+            # CSV
+            csv_bytes = export_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "💾 Download chat (CSV)",
+                data=csv_bytes,
+                file_name="alpha_chat.csv",
+                mime="text/csv",
+            )
+
+            # Excel
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+                export_df.to_excel(writer, index=False, sheet_name="Chat")
+            st.download_button(
+                "📊 Download chat (Excel)",
+                data=buf.getvalue(),
+                file_name="alpha_chat.xlsx",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+            )
 
 
 if __name__ == "__main__":
