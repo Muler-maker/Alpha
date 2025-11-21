@@ -158,10 +158,13 @@ st.markdown(
         background: transparent !important;
     }
     
-    /* Remove white background from button base */
+    /* Remove white background from button base and all inner divs */
     [data-testid="stForm"] button[kind="primary"] > div,
-    [data-testid="stForm"] button[type="submit"] > div {
-        background: transparent !important;
+    [data-testid="stForm"] button[type="submit"] > div,
+    [data-testid="stForm"] button[kind="primary"] div,
+    [data-testid="stForm"] button[type="submit"] div {
+        background: var(--isotopia-light) !important;
+        border-radius: 999px !important;
     }
     
     /* Style button icon - grey arrow */
