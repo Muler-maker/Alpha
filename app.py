@@ -384,7 +384,7 @@ def main():
                 "Ask a question",
                 value="",
                 label_visibility="collapsed",
-                placeholder="Ask a question about orders, projections, or major events…",
+                placeholder="How can Alpha help you?",
             )
         with col_btn:
             submitted = st.form_submit_button("➤")
