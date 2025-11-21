@@ -61,12 +61,12 @@ st.markdown(
        CUSTOM CHAT FORM STYLING (FINAL)
        ========================== */
 
-    /* Centered and shortened chat input */
     .alpha-chat-input-wrapper {
-        margin: 2rem auto 2.5rem auto;
-        max-width: 400px;          /* <<< NEW WIDTH */
-        width: 100%;
+        margin: 1.5rem auto 2rem auto;
+        max-width: 480px;   /* smaller on desktop */
+        width: 85%;         /* smaller than screen on mobile */
     }
+
 
     /* Remove outer form frame */
     .alpha-chat-input-wrapper [data-testid="stForm"] {
