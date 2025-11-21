@@ -1111,10 +1111,13 @@ def _run_aggregation(
     group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
 
     # --- SUM (default) ---
+    # --- SUM (default) ---
     if aggregation == "sum_mci":
         total_mci = float(df_filtered[total_col].sum())
         if group_cols:
             grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
+            # 👇 force nice integer display instead of scientific notation
+            grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
             return grouped_df, total_mci
         return None, total_mci
 
