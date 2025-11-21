@@ -275,7 +275,8 @@ def main():
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ---------- PROCESS QUESTION ----------
-    if "submitted" in locals() and submitted and prompt.strip():
+    if "send_clicked" in locals() and send_clicked and prompt.strip():
+
         txt = prompt.strip()
         st.session_state.messages.append({"role": "user", "content": txt})
 
