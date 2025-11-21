@@ -73,58 +73,60 @@ st.markdown(
         background: transparent !important;
     }
     
-    /* Remove grey background from form container */
-    [data-testid="stForm"] > div {
+    /* Remove grey background from all form containers */
+    [data-testid="stForm"] > div,
+    [data-testid="stForm"] [data-testid="stHorizontalBlock"],
+    [data-testid="stForm"] [data-testid="column"] {
         background: transparent !important;
         border: none !important;
+        gap: 0 !important;
     }
     
-    /* Make the entire columns container relative for positioning */
+    /* Make columns container behave like a single unit */
     [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
-        position: relative !important;
-        background: transparent !important;
+        background-color: #F6F0FF !important;
+        border-radius: 999px !important;
+        border: 1px solid #E0D0FF !important;
+        display: flex !important;
+        align-items: center !important;
+        padding-right: 4px !important;
     }
     
-    /* Make input column take full width */
+    /* Input column */
     [data-testid="stForm"] [data-testid="column"]:first-child {
-        position: relative !important;
-        width: 100% !important;
         flex: 1 !important;
     }
     
-    /* Target the text input wrapper */
-    [data-testid="stForm"] [data-testid="stTextInput"] {
-        position: relative !important;
+    /* Button column - make it fit content */
+    [data-testid="stForm"] [data-testid="column"]:last-child {
+        flex: 0 0 auto !important;
+        width: auto !important;
+        min-width: auto !important;
     }
     
+    /* Target the text input wrapper */
     [data-testid="stForm"] [data-testid="stTextInput"] > div {
         background: transparent !important;
         border: none !important;
     }
     
-    /* Target the text input in your form */
+    /* Target the text input - make it transparent since parent has the styling */
     [data-testid="stForm"] [data-testid="stTextInput"] input {
-        background-color: #F6F0FF !important;
-        border-radius: 999px !important;
-        border: 1px solid #E0D0FF !important;
-        padding: 12px 55px 12px 20px !important;
+        background: transparent !important;
+        border: none !important;
+        padding: 12px 12px 12px 20px !important;
         font-size: 15px !important;
         color: #2D1B56 !important;
-        width: 100% !important;
+        box-shadow: none !important;
     }
     
-    /* Position the button column absolutely inside the input */
-    [data-testid="stForm"] [data-testid="column"]:last-child {
-        position: absolute !important;
-        right: 6px !important;
-        top: 50% !important;
-        transform: translateY(-50%) !important;
-        width: auto !important;
-        min-width: auto !important;
-        z-index: 10 !important;
+    /* Focus state - style the parent container */
+    [data-testid="stForm"] [data-testid="stTextInput"] input:focus {
+        outline: none !important;
+        box-shadow: none !important;
     }
     
-    /* Style the submit button as a circle inside the input */
+    /* Style the submit button as a circle */
     [data-testid="stForm"] button[kind="primary"] {
         background-color: var(--isotopia-light) !important;
         color: #FFFFFF !important;
@@ -133,6 +135,7 @@ st.markdown(
         width: 38px !important;
         height: 38px !important;
         min-width: 38px !important;
+        min-height: 38px !important;
         padding: 0 !important;
         box-shadow: none !important;
         display: flex !important;
@@ -145,10 +148,11 @@ st.markdown(
         background-color: #6A5CA8 !important;
     }
     
-    /* Hide button text, show only icon */
+    /* Style button icon */
     [data-testid="stForm"] button[kind="primary"] p {
         margin: 0 !important;
-        font-size: 18px !important;
+        font-size: 16px !important;
+        line-height: 1 !important;
     }
 
     /* ==========================
