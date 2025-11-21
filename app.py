@@ -74,27 +74,26 @@ st.markdown(
     }
     
     /* Remove grey background from all form containers */
-    [data-testid="stForm"] > div,
-    [data-testid="stForm"] [data-testid="stHorizontalBlock"],
-    [data-testid="stForm"] [data-testid="column"] {
+    [data-testid="stForm"] > div {
         background: transparent !important;
         border: none !important;
-        gap: 0 !important;
     }
     
-    /* Make columns container behave like a single unit */
+    /* Make columns container behave like a single unit with purple background */
     [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
         background-color: #F6F0FF !important;
         border-radius: 999px !important;
         border: 1px solid #E0D0FF !important;
         display: flex !important;
         align-items: center !important;
-        padding-right: 4px !important;
+        padding: 4px !important;
+        gap: 0 !important;
     }
     
-    /* Input column */
+    /* Input column - remove any background */
     [data-testid="stForm"] [data-testid="column"]:first-child {
         flex: 1 !important;
+        background: transparent !important;
     }
     
     /* Button column - make it fit content */
@@ -102,32 +101,37 @@ st.markdown(
         flex: 0 0 auto !important;
         width: auto !important;
         min-width: auto !important;
+        background: transparent !important;
     }
     
     /* Target the text input wrapper */
-    [data-testid="stForm"] [data-testid="stTextInput"] > div {
+    [data-testid="stForm"] [data-testid="stTextInput"],
+    [data-testid="stForm"] [data-testid="stTextInput"] > div,
+    [data-testid="stForm"] [data-testid="stTextInput"] > div > div {
         background: transparent !important;
         border: none !important;
     }
     
-    /* Target the text input - make it transparent since parent has the styling */
+    /* Target the text input - make it transparent */
     [data-testid="stForm"] [data-testid="stTextInput"] input {
         background: transparent !important;
         border: none !important;
-        padding: 12px 12px 12px 20px !important;
+        padding: 8px 8px 8px 16px !important;
         font-size: 15px !important;
         color: #2D1B56 !important;
         box-shadow: none !important;
     }
     
-    /* Focus state - style the parent container */
+    /* Focus state */
     [data-testid="stForm"] [data-testid="stTextInput"] input:focus {
         outline: none !important;
         box-shadow: none !important;
+        background: transparent !important;
     }
     
-    /* Style the submit button as a circle */
-    [data-testid="stForm"] button[kind="primary"] {
+    /* Style the submit button as a circle with purple background */
+    [data-testid="stForm"] button[kind="primary"],
+    [data-testid="stForm"] button[type="submit"] {
         background-color: var(--isotopia-light) !important;
         color: #FFFFFF !important;
         border-radius: 999px !important;
@@ -144,15 +148,22 @@ st.markdown(
         margin: 0 !important;
     }
 
-    [data-testid="stForm"] button[kind="primary"]:hover {
+    [data-testid="stForm"] button[kind="primary"]:hover,
+    [data-testid="stForm"] button[type="submit"]:hover {
         background-color: #6A5CA8 !important;
     }
     
+    /* Remove any button wrapper backgrounds */
+    [data-testid="stForm"] [data-testid="column"]:last-child > div {
+        background: transparent !important;
+    }
+    
     /* Style button icon */
-    [data-testid="stForm"] button[kind="primary"] p {
+    [data-testid="stForm"] button p {
         margin: 0 !important;
         font-size: 16px !important;
         line-height: 1 !important;
+        color: #FFFFFF !important;
     }
 
     /* ==========================
