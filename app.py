@@ -131,7 +131,8 @@ st.markdown(
     
     /* Style the submit button as a circle with purple background */
     [data-testid="stForm"] button[kind="primary"],
-    [data-testid="stForm"] button[type="submit"] {
+    [data-testid="stForm"] button[type="submit"],
+    [data-testid="stForm"] button {
         background-color: var(--isotopia-light) !important;
         color: #6B7280 !important;
         border-radius: 999px !important;
@@ -149,7 +150,8 @@ st.markdown(
     }
 
     [data-testid="stForm"] button[kind="primary"]:hover,
-    [data-testid="stForm"] button[type="submit"]:hover {
+    [data-testid="stForm"] button[type="submit"]:hover,
+    [data-testid="stForm"] button:hover {
         background-color: #6A5CA8 !important;
     }
     
@@ -158,13 +160,15 @@ st.markdown(
         background: transparent !important;
     }
     
-    /* Remove white background from button base and all inner divs */
-    [data-testid="stForm"] button[kind="primary"] > div,
-    [data-testid="stForm"] button[type="submit"] > div,
-    [data-testid="stForm"] button[kind="primary"] div,
-    [data-testid="stForm"] button[type="submit"] div {
-        background: var(--isotopia-light) !important;
-        border-radius: 999px !important;
+    /* Target ALL elements inside button with purple background */
+    [data-testid="stForm"] button *,
+    [data-testid="stForm"] button > *,
+    [data-testid="stForm"] button div,
+    [data-testid="stForm"] button span,
+    [data-testid="stForm"] button[kind="primary"] *,
+    [data-testid="stForm"] button[type="submit"] * {
+        background-color: transparent !important;
+        background: transparent !important;
     }
     
     /* Style button icon - grey arrow */
@@ -173,6 +177,7 @@ st.markdown(
         font-size: 16px !important;
         line-height: 1 !important;
         color: #6B7280 !important;
+        background: transparent !important;
     }
 
     /* ==========================
