@@ -79,6 +79,11 @@ st.markdown(
         border: none !important;
     }
     
+    /* Hide the "Press Enter to submit form" message */
+    [data-testid="stForm"] [data-testid="InputInstructions"] {
+        display: none !important;
+    }
+    
     /* Make columns container behave like a single unit with purple background */
     [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
         background-color: #F6F0FF !important;
@@ -88,20 +93,26 @@ st.markdown(
         align-items: center !important;
         padding: 4px !important;
         gap: 0 !important;
+        position: relative !important;
     }
     
     /* Input column - remove any background */
     [data-testid="stForm"] [data-testid="column"]:first-child {
         flex: 1 !important;
         background: transparent !important;
+        position: static !important;
     }
     
-    /* Button column - make it fit content */
+    /* Button column - position it properly on mobile and desktop */
     [data-testid="stForm"] [data-testid="column"]:last-child {
-        flex: 0 0 auto !important;
+        position: absolute !important;
+        right: 4px !important;
+        top: 50% !important;
+        transform: translateY(-50%) !important;
         width: auto !important;
         min-width: auto !important;
         background: transparent !important;
+        z-index: 10 !important;
     }
     
     /* Target the text input wrapper */
@@ -112,14 +123,15 @@ st.markdown(
         border: none !important;
     }
     
-    /* Target the text input - make it transparent */
+    /* Target the text input - make it transparent with proper padding for button */
     [data-testid="stForm"] [data-testid="stTextInput"] input {
         background: transparent !important;
         border: none !important;
-        padding: 8px 8px 8px 16px !important;
+        padding: 8px 50px 8px 16px !important;
         font-size: 15px !important;
         color: #2D1B56 !important;
         box-shadow: none !important;
+        width: 100% !important;
     }
     
     /* Focus state */
