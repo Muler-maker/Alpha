@@ -40,61 +40,147 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-    /* ==========================
-       ST.CHAT_INPUT – LIGHT PURPLE PILL
-       ========================== */
+/* Main container width */
+.block-container {
+    padding-top: 0.5rem;
+    max-width: 1100px;
+}
 
-    /* Make outer chat-input bar transparent & borderless */
-    [data-testid="stChatInput"] {
-        position: sticky;
-        bottom: 0;
-        z-index: 999;
-        padding: 0 1rem 0.75rem 1rem;
-        background: transparent !important;
-        box-shadow: none !important;
-        border: none !important;
-    }
+/* Brand colors */
+:root {
+    --isotopia-primary: #4A2E88;
+    --isotopia-light:   #9C8AD0;
+    --chat-bg:          #F6F0FF;
+}
 
-    /* Remove the white/grey outer frame */
-    [data-testid="stChatInput"] > div {
-        background: transparent !important;
-        box-shadow: none !important;
-        border: none !important;
-    }
+/* Centered inner content (badge, downloads, messages) */
+.alpha-content-wrapper {
+    max-width: 900px;
+    margin: 0 auto;
+}
 
-    /* Inner input “pill” */
-    [data-testid="stChatInput"] [data-baseweb="base-input"] {
-        background-color: #F6F0FF !important;   /* light purple */
-        border-radius: 999px !important;
-        border: 1px solid #E0D0FF !important;
-        box-shadow: none !important;
-        padding-left: 18px !important;
-    }
+/* Data badge */
+.data-badge {
+    background-color: #E8F7E4;
+    color: #267c3b;
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    display: inline-block;
+    margin-top: 10px;
+    margin-bottom: 12px;
+}
 
-    /* Text inside the input */
-    [data-testid="stChatInput"] input,
-    [data-testid="stChatInput"] textarea {
-        background: transparent !important;
-        color: #2D1B56 !important;
-        font-size: 15px !important;
-    }
+/* Download buttons row */
+.download-row {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 18px;
+}
 
-    /* Send button – circular, same height as pill */
-    [data-testid="stChatInput"] button[kind="primary"] {
-        background-color: #9C8AD0 !important;   /* isotopia-light */
-        color: #FFFFFF !important;
-        border-radius: 999px !important;
-        border: none !important;
-        width: 40px !important;
-        height: 40px !important;
-        margin-left: 8px !important;
-        box-shadow: none !important;
-    }
+/* Let Streamlit buttons look a bit nicer */
+.download-row .stButton > button {
+    border-radius: 8px !important;
+}
 
-    [data-testid="stChatInput"] button[kind="primary"]:hover {
-        background-color: #6A5CA8 !important;
-    }
+/* Extra bottom space so messages are not hidden behind fixed chat bar */
+.chat-bottom-spacer {
+    height: 120px;
+}
 
+/* ==========================
+   CHAT FOOTER (fixed)
+   ========================== */
+
+.alpha-chat-footer-outer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 0.4rem 0.5rem 0.8rem 0.5rem;
+    background: rgba(255, 255, 255, 0.97);
+    z-index: 1000;
+    box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.05);
+}
+
+.alpha-chat-footer-inner {
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+/* Wrapper for the form itself */
+.alpha-chat-input-wrapper {
+    margin: 0 auto;
+    max-width: 720px;   /* desktop */
+    width: 100%;        /* mobile */
+}
+
+/* Remove default form frame */
+.alpha-chat-input-wrapper [data-testid="stForm"] {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+}
+
+/* Align input + button */
+.alpha-chat-input-wrapper [data-testid="column"] {
+    display: flex;
+    align-items: center;
+}
+
+/* Pill background for the text input */
+.alpha-chat-input-wrapper [data-baseweb="base-input"] {
+    background-color: var(--chat-bg) !important;
+    color: #2D1B56 !important;
+    border: none !important;
+    border-radius: 999px !important;
+    padding-left: 18px !important;
+    box-shadow: none !important;
+}
+
+/* Focus ring */
+.alpha-chat-input-wrapper [data-baseweb="base-input"]:focus-within {
+    box-shadow: 0 0 0 2px #D6C3FF !important;
+    border: none !important;
+}
+
+/* Inner text styling */
+.alpha-chat-input-wrapper input[type="text"] {
+    background-color: transparent !important;
+    color: #2D1B56 !important;
+    font-size: 15px !important;
+}
+
+/* Force pill look on any st.text_input in this area */
+.alpha-chat-input-wrapper [data-testid="stTextInput"] > div > div {
+    background-color: var(--chat-bg) !important;
+    border-radius: 999px !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+/* Send button (round) */
+.alpha-chat-input-wrapper .stFormSubmitButton > button {
+    background-color: var(--isotopia-light) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 50% !important;
+    width: 42px !important;
+    height: 42px !important;
+    font-size: 20px !important;
+    padding: 0 !important;
+    margin-left: 8px;
+}
+
+.alpha-chat-input-wrapper .stFormSubmitButton > button:hover {
+    background-color: #6A5CA8 !important;
+}
+
+/* Ensure app body can scroll behind the fixed footer */
+html, body, [data-testid="stAppViewContainer"] {
+    overflow-x: hidden;
+}
 </style>
 """,
     unsafe_allow_html=True,
