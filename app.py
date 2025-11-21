@@ -143,16 +143,63 @@ st.markdown(
         opacity: 0.7 !important;
     }
     
-    /* Mobile-specific adjustments */
+    /* ================================
+       MOBILE FIXES (≤ 768px)
+       ================================ */
     @media (max-width: 768px) {
+
+        /* Prevent logo cutoff + give margin on sides */
+        .block-container {
+            padding-top: 2.2rem !important;
+            max-width: 100% !important;
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+        }
+
+        /* Make the chat pill full-width on small screens */
+        [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
+            width: 100% !important;
+            padding: 6px 10px 6px 16px !important;
+            gap: 6px !important;
+        }
+
+        /* Input column – very flexible */
+        [data-testid="stForm"] [data-testid="column"]:first-child {
+            flex: 1 1 auto !important;
+            min-width: 0 !important;
+        }
+
+        /* Button column – fixed size, pinned to the right */
+        [data-testid="stForm"] [data-testid="column"]:last-child {
+            flex: 0 0 42px !important;
+            width: 42px !important;
+            min-width: 42px !important;
+        }
+
+        /* Button size on mobile */
+        [data-testid="stForm"] button {
+            width: 42px !important;
+            height: 42px !important;
+            min-width: 42px !important;
+            min-height: 42px !important;
+        }
+
+        /* Input text size + vertical padding */
         [data-testid="stForm"] [data-testid="stTextInput"] input {
             font-size: 14px !important;
+            padding-top: 10px !important;
+            padding-bottom: 10px !important;
         }
-        
-        [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
-            padding: 4px 4px 4px 14px !important;
+
+        /* Make footer wrapper respect screen width */
+        .alpha-chat-footer-inner,
+        .alpha-chat-input-wrapper {
+            width: 100% !important;
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
         }
     }
+
     
     /* Focus state */
     [data-testid="stForm"] [data-testid="stTextInput"] input:focus {
