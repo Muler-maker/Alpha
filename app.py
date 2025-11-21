@@ -160,6 +160,27 @@ st.markdown(
     border: none !important;
     box-shadow: none !important;
     }
+    
+    /* Make the chat input area narrower and centered */
+    .chat-container {
+    width: 75% !important;
+    margin: 0 auto !important;
+    }
+
+    /* Style the input box itself */
+    .chat-container input {
+    background-color: #f4e8ff !important;
+    padding: 14px !important;
+    border-radius: 12px !important;
+    border: 1px solid #e0caff !important;
+    }
+
+    /* Make the submit button align with the same width */
+    .chat-submit-container {
+    width: 75% !important;
+    margin: 0 auto !important;
+    text-align: right;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -260,19 +281,24 @@ def main():
             with st.chat_message(role):
                 st.markdown(msg["content"])
 
-        # Chat input
-        st.markdown('<div class="alpha-chat-input-wrapper">', unsafe_allow_html=True)
+        # Chat input (narrow + centered)
+        st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+
         with st.form("alpha-chat-form", clear_on_submit=True):
             col_in, col_btn = st.columns([12, 1])
+
             with col_in:
                 prompt = st.text_input(
                     "",
                     placeholder="Ask a question about orders, projections, or major events…",
                     label_visibility="collapsed",
                 )
+
             with col_btn:
                 submitted = st.form_submit_button("➤")
-        st.markdown("</div>", unsafe_allow_html=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
+
 
     # ---------- PROCESS QUESTION ----------
     if "send_clicked" in locals() and send_clicked and prompt.strip():
