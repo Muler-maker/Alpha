@@ -297,8 +297,7 @@ def main():
             with col_btn:
                 submitted = st.form_submit_button("➤")
 
-st.markdown("</div>", unsafe_allow_html=True)
-
+        st.markdown("</div>", unsafe_allow_html=True)
 
     # ---------- PROCESS QUESTION ----------
     if "send_clicked" in locals() and send_clicked and prompt.strip():
