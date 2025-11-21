@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from PIL import Image
 
-# Local modules
 from charts import render_chart_from_answer, strip_chart_blocks
 from data_loader import load_orders, load_projection, load_metadata, preprocess_orders
 from consolidated import build_consolidated_df
@@ -36,9 +35,7 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-    /* ==========================
-       MAIN CONTAINER
-       ========================== */
+    /* Main content width + top padding */
     .block-container {
         padding-top: 0.5rem;
         max-width: 1100px;
@@ -49,9 +46,6 @@ st.markdown(
         --isotopia-light:   #9C8AD0;
     }
 
-    /* ==========================
-       DATA BADGE
-       ========================== */
     .data-badge {
         background-color: #E8F7E4;
         color: #267c3b;
@@ -63,16 +57,23 @@ st.markdown(
         margin-bottom: 18px;
     }
 
-    /* ==========================
-       CHAT INPUT AREA (FINAL)
-       ========================== */
-    .alpha-chat-input-wrapper {
-        margin: 1.5rem auto 2rem auto !important;
-        max-width: 480px !important;   /* Smaller on desktop */
-        width: 90% !important;         /* Smaller on mobile */
+    .sidebar-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--isotopia-primary);
+        margin-bottom: 6px;
     }
 
-    /* Remove the default Streamlit form frame */
+    /* ==========================
+       CHAT INPUT AREA
+       ========================== */
+    .alpha-chat-input-wrapper {
+        margin: 1.5rem auto 2rem auto;
+        max-width: 560px;     /* desktop width */
+        width: 100%;          /* mobile responsive */
+    }
+
+    /* Remove default form frame */
     .alpha-chat-input-wrapper [data-testid="stForm"] {
         border: none !important;
         background: transparent !important;
@@ -80,7 +81,7 @@ st.markdown(
         padding: 0 !important;
     }
 
-    /* Chat text input pill styling */
+    /* Input "pill" */
     .alpha-chat-input-wrapper [data-baseweb="base-input"] {
         background-color: #F6F0FF !important;
         color: #2D1B56 !important;
@@ -90,20 +91,18 @@ st.markdown(
         box-shadow: none !important;
     }
 
-    /* Focus ring */
     .alpha-chat-input-wrapper [data-baseweb="base-input"]:focus-within {
         box-shadow: 0 0 0 2px #D6C3FF !important;
         border: none !important;
     }
 
-    /* Inner text */
     .alpha-chat-input-wrapper input[type="text"] {
         background: transparent !important;
         color: #2D1B56 !important;
         font-size: 15px !important;
     }
 
-    /* Perfect pill look — suppress leftover frames */
+    /* Make sure any st.text_input also keeps the pill look */
     [data-testid="stTextInput"] > div > div {
         background-color: #F6F0FF !important;
         border-radius: 999px !important;
@@ -117,13 +116,13 @@ st.markdown(
         font-size: 15px !important;
     }
 
-    /* Align input + button horizontally */
+    /* Align input + button */
     .alpha-chat-input-wrapper [data-testid="column"] {
         display: flex;
         align-items: center;
     }
 
-    /* Send button styling */
+    /* Send button */
     .alpha-chat-input-wrapper .stFormSubmitButton > button {
         background-color: var(--isotopia-light) !important;
         color: white !important;
@@ -140,7 +139,6 @@ st.markdown(
         background-color: #6A5CA8 !important;
     }
 </style>
-
 """,
     unsafe_allow_html=True,
 )
@@ -159,10 +157,11 @@ def init_state():
 
 
 # ================================
-# 🧩 LOAD DATA
+# 📥 DATA LOADING
 # ================================
 def load_data_if_needed():
-    if st.session_state.data_loaded:
+    ss = st.session_state
+    if ss.data_loaded:
         return
 
     with st.spinner("Loading latest data from Google Sheets…"):
@@ -170,14 +169,13 @@ def load_data_if_needed():
         orders_df = preprocess_orders(raw_orders)
         proj_df = load_projection()
         meta_df = load_metadata()
+        consolidated_df = build_consolidated_df(orders_df, proj_df, meta_df)
 
-        consolidated = build_consolidated_df(orders_df, proj_df, meta_df)
-
-    st.session_state.orders_df = orders_df
-    st.session_state.proj_df = proj_df
-    st.session_state.meta_df = meta_df
-    st.session_state.consolidated_df = consolidated
-    st.session_state.data_loaded = True
+    ss.orders_df = orders_df
+    ss.proj_df = proj_df
+    ss.meta_df = meta_df
+    ss.consolidated_df = consolidated_df
+    ss.data_loaded = True
 
 
 # ================================
@@ -194,17 +192,17 @@ def render_header():
 def main():
     init_state()
 
-    # Always show logo
+    # Header always visible
     render_header()
 
-    # -------- AUTH --------
+    # ---------- AUTH ----------
     if APP_PASSWORD and not st.session_state.authenticated:
         st.write("")
         st.write("")
         st.write("")
 
-        col1, col2, col3 = st.columns([1, 3, 1])
-        with col2:
+        c1, c2, c3 = st.columns([1, 3, 1])
+        with c2:
             pwd = st.text_input(
                 "Password",
                 type="password",
@@ -219,89 +217,33 @@ def main():
                     st.error("Incorrect password.")
         return
 
-    # -------- DATA --------
+    # ---------- DATA ----------
     load_data_if_needed()
     df = st.session_state.consolidated_df
 
-    # Layout: left exports, right chat
-    left, right = st.columns([1.1, 4], gap="large")
+    # Layout: left = chats/export, right = main chat
+    side_col, main_col = st.columns([1.1, 4], gap="large")
 
-    # ---------- RIGHT: CHAT ----------
-    with right:
-        st.markdown(
-            f"<div class='data-badge'>✔ Data synced · "
-            f"{len(df):,} rows · {len(df.columns)} columns</div>",
-            unsafe_allow_html=True,
-        )
+    # ---------- LEFT COLUMN: CHATS / EXPORT ----------
+    with side_col:
+        st.markdown("<div class='sidebar-title'>Chats</div>", unsafe_allow_html=True)
 
-        # show previous messages
-        for msg in st.session_state.messages:
-            role = msg.get("role", "assistant")
-            with st.chat_message(role):
-                st.markdown(msg["content"])
-
-        # Chat input (narrow + centered)
-        st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-
-        with st.form("alpha-chat-form", clear_on_submit=True):
-            col_in, col_btn = st.columns([12, 1])
-
-            with col_in:
-                prompt = st.text_input(
-                    "",
-                    placeholder="Ask a question about orders, projections, or major events…",
-                    label_visibility="collapsed",
-                )
-
-            with col_btn:
-                submitted = st.form_submit_button("➤")
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    # ---------- PROCESS QUESTION ----------
-    if "send_clicked" in locals() and send_clicked and prompt.strip():
-
-        txt = prompt.strip()
-        st.session_state.messages.append({"role": "user", "content": txt})
-
-        with right:
-            with st.chat_message("assistant"):
-                try:
-                    reply = answer_question_from_df(
-                        txt,
-                        df,
-                        history=st.session_state.messages,
-                    )
-                except Exception as e:
-                    reply = f"Error: {e}"
-
-                cleaned = strip_chart_blocks(reply)
-                st.markdown(cleaned)
-
-                try:
-                    render_chart_from_answer(reply)
-                except Exception:
-                    pass
-
-        st.session_state.messages.append({"role": "assistant", "content": cleaned})
-
-    # ---------- LEFT: EXPORTS ----------
-    with left:
         if st.session_state.messages:
             st.caption("Current session")
 
             export_df = pd.DataFrame(st.session_state.messages)
 
-            # CSV
+            # CSV download
             csv_bytes = export_df.to_csv(index=False).encode("utf-8")
             st.download_button(
                 "💾 Download chat (CSV)",
                 data=csv_bytes,
                 file_name="alpha_chat.csv",
                 mime="text/csv",
+                key="download_chat_csv",
             )
 
-            # Excel
+            # Excel download
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
                 export_df.to_excel(writer, index=False, sheet_name="Chat")
@@ -313,7 +255,87 @@ def main():
                     "application/vnd.openxmlformats-officedocument."
                     "spreadsheetml.sheet"
                 ),
+                key="download_chat_excel",
             )
+        else:
+            st.caption("No messages yet.")
+
+    # ---------- RIGHT COLUMN: CHAT ----------
+    with main_col:
+        # Data badge
+        st.markdown(
+            f"<div class='data-badge'>✔ Data synced · "
+            f"{len(df):,} rows · {len(df.columns)} columns</div>",
+            unsafe_allow_html=True,
+        )
+
+        # Show existing conversation
+        for msg in st.session_state.messages:
+            role = msg.get("role", "assistant")
+            content = msg.get("content", "")
+            if role == "user":
+                avatar = "🧪"   # your user icon
+            else:
+                avatar = "☢️"   # Alpha icon
+
+            with st.chat_message(role, avatar=avatar):
+                st.markdown(content)
+
+        # Chat input (centered, narrow)
+        st.markdown('<div class="alpha-chat-input-wrapper">', unsafe_allow_html=True)
+        with st.form("alpha-chat-form", clear_on_submit=True):
+            col_input, col_btn = st.columns([12, 1])
+
+            with col_input:
+                prompt = st.text_input(
+                    "Ask a question",
+                    value="",
+                    label_visibility="collapsed",
+                    placeholder=(
+                        "Ask a question about orders, projections, or major events…"
+                    ),
+                )
+
+            with col_btn:
+                submitted = st.form_submit_button("➤")
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # ---------- PROCESS NEW QUESTION ----------
+    if submitted and prompt.strip():
+        user_text = prompt.strip()
+
+        # Save user message
+        st.session_state.messages.append({"role": "user", "content": user_text})
+
+        with main_col:
+            # Show latest user message immediately
+            with st.chat_message("user", avatar="🧪"):
+                st.markdown(user_text)
+
+            # Alpha answer
+            with st.chat_message("assistant", avatar="☢️"):
+                try:
+                    with st.spinner("Thinking…"):
+                        raw_answer = answer_question_from_df(
+                            user_text,
+                            df,
+                            history=st.session_state.messages,
+                        )
+                except Exception as e:
+                    raw_answer = f"An error occurred: {e}"
+
+                cleaned = strip_chart_blocks(raw_answer)
+                st.markdown(cleaned)
+
+                # Try to render chart if present
+                try:
+                    render_chart_from_answer(raw_answer)
+                except Exception as e:
+                    st.caption(f"⚠️ Chart error: {e}")
+
+        # Save assistant message
+        st.session_state.messages.append({"role": "assistant", "content": cleaned})
 
 
 if __name__ == "__main__":
