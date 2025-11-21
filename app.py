@@ -40,58 +40,78 @@ st.set_page_config(
 st.markdown(
     """
 <style>
+    /* Main content width + top padding */
+    .block-container {
+        padding-top: 0.5rem;
+        max-width: 1100px;
+    }
 
-:root {
-    --isotopia-light:   #F6F0FF;   /* light purple */
-    --isotopia-border:  #E0D7FF;
-    --isotopia-primary: #4A2E88;
-    --isotopia-accent:  #9C8AD0;
-}
+    :root {
+        --isotopia-primary: #4A2E88;
+        --isotopia-light:   #9C8AD0;
+    }
 
-/* -----------------------------------------------------
-   1️⃣ REMOVE STREAMLIT'S GREY CHAT INPUT CONTAINER
------------------------------------------------------ */
-[data-testid="stChatInput"] {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-}
+    .data-badge {
+        background-color: #E8F7E4;
+        color: #267c3b;
+        padding: 6px 14px;
+        border-radius: 8px;
+        font-size: 13px;
+        display: inline-block;
+        margin-top: 10px;
+        margin-bottom: 18px;
+    }
 
-/* Remove grey sub-wrapper */
-[data-testid="stChatInput"] > div {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-}
+    /* ==========================
+       st.chat_input – light purple pill
+       ========================== */
 
-/* -----------------------------------------------------
-   2️⃣ TRUE LIGHT-PURPLE PILL
------------------------------------------------------ */
-[data-testid="stChatInput"] [data-baseweb="base-input"] {
-    background-color: var(--isotopia-light) !important;
-    border-radius: 999px !important;
-    border: 1px solid var(--isotopia-border) !important;
-    padding: 12px 18px !important;
-    height: 48px !important;
-    display: flex !important;
-    align-items: center !important;
-    box-shadow: none !important;
-}
+    /* Kill the grey outer bar */
+    [data-testid="stChatInput"] {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
 
-/* Input text */
-[data-testid="stChatInput"] input,
-[data-testid="stChatInput"] textarea {
-    background: transparent !important;
-    color: var(--isotopia-primary) !important;
-    font-size: 16px !important;
-}
+    /* Inner wrapper (also grey by default) */
+    [data-testid="stChatInput"] > div {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
 
-/* -----------------------------------------------------
-   3️⃣ SEND BUTTON INSIDE THE PILL
----------------------------------------------------
+    /* Actual input pill */
+    [data-testid="stChatInput"] [data-baseweb="base-input"] {
+        background-color: #F6F0FF !important;   /* light purple */
+        border-radius: 999px !important;
+        border: 1px solid #E0D0FF !important;
+        box-shadow: none !important;
+        padding-left: 18px !important;
+    }
 
+    /* Text inside input */
+    [data-testid="stChatInput"] input,
+    [data-testid="stChatInput"] textarea {
+        background: transparent !important;
+        color: #2D1B56 !important;
+        font-size: 15px !important;
+    }
+
+    /* Send button – purple circle */
+    [data-testid="stChatInput"] button[kind="primary"] {
+        background-color: var(--isotopia-light) !important;
+        color: #FFFFFF !important;
+        border-radius: 999px !important;
+        border: none !important;
+        width: 40px !important;
+        height: 40px !important;
+        box-shadow: none !important;
+    }
+
+    [data-testid="stChatInput"] button[kind="primary"]:hover {
+        background-color: #6A5CA8 !important;
+    }
+</style>
 """,
     unsafe_allow_html=True,
 )
