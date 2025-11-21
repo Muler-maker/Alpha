@@ -66,15 +66,40 @@ st.markdown(
        Form-based chat input styling
        ========================== */
     
-    /* Remove form border */
+    /* Remove form border and background */
     [data-testid="stForm"] {
         border: none !important;
         padding: 0 !important;
+        background: transparent !important;
     }
     
-    /* Container for the input to position button inside */
+    /* Remove grey background from form container */
+    [data-testid="stForm"] > div {
+        background: transparent !important;
+        border: none !important;
+    }
+    
+    /* Make the entire columns container relative for positioning */
+    [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
+        position: relative !important;
+        background: transparent !important;
+    }
+    
+    /* Make input column take full width */
     [data-testid="stForm"] [data-testid="column"]:first-child {
         position: relative !important;
+        width: 100% !important;
+        flex: 1 !important;
+    }
+    
+    /* Target the text input wrapper */
+    [data-testid="stForm"] [data-testid="stTextInput"] {
+        position: relative !important;
+    }
+    
+    [data-testid="stForm"] [data-testid="stTextInput"] > div {
+        background: transparent !important;
+        border: none !important;
     }
     
     /* Target the text input in your form */
@@ -82,25 +107,21 @@ st.markdown(
         background-color: #F6F0FF !important;
         border-radius: 999px !important;
         border: 1px solid #E0D0FF !important;
-        padding: 12px 50px 12px 20px !important;
+        padding: 12px 55px 12px 20px !important;
         font-size: 15px !important;
         color: #2D1B56 !important;
-    }
-    
-    /* Remove default input container styling */
-    [data-testid="stForm"] [data-testid="stTextInput"] > div {
-        background: transparent !important;
-        border: none !important;
+        width: 100% !important;
     }
     
     /* Position the button column absolutely inside the input */
     [data-testid="stForm"] [data-testid="column"]:last-child {
         position: absolute !important;
-        right: 4px !important;
+        right: 6px !important;
         top: 50% !important;
         transform: translateY(-50%) !important;
         width: auto !important;
         min-width: auto !important;
+        z-index: 10 !important;
     }
     
     /* Style the submit button as a circle inside the input */
@@ -109,14 +130,15 @@ st.markdown(
         color: #FFFFFF !important;
         border-radius: 999px !important;
         border: none !important;
-        width: 36px !important;
-        height: 36px !important;
-        min-width: 36px !important;
+        width: 38px !important;
+        height: 38px !important;
+        min-width: 38px !important;
         padding: 0 !important;
         box-shadow: none !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
+        margin: 0 !important;
     }
 
     [data-testid="stForm"] button[kind="primary"]:hover {
