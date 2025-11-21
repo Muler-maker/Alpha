@@ -35,7 +35,7 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-    /* Main page container */
+    /* Main content width + top padding */
     .block-container {
         padding-top: 0.5rem;
         max-width: 1100px;
@@ -46,14 +46,11 @@ st.markdown(
         --isotopia-light:   #9C8AD0;
     }
 
-    body, .main {
-        background-color: #FFFFFF !important;
-    }
-
-    /* Center the data badge so it aligns with the chat */
-    .data-badge-wrapper {
-        text-align: center;
-        margin-bottom: 0.5rem;
+    /* Shared centered width for badge, downloads, and chat input */
+    .alpha-main-width {
+        max-width: 720px;
+        margin-left: auto;
+        margin-right: auto;
     }
 
     .data-badge {
@@ -63,50 +60,91 @@ st.markdown(
         border-radius: 8px;
         font-size: 13px;
         display: inline-block;
+        margin-top: 10px;
+        margin-bottom: 18px;
     }
 
-    /* --------------------------
-       CHAT INPUT (st.chat_input)
-       -------------------------- */
-
-    /* Make the area transparent, no grey strip */
-    [data-testid="stChatInput"] {
-        position: sticky;
-        bottom: 0;
-        background-color: transparent !important;
-        padding-top: 0.75rem;
-        padding-bottom: 0.75rem;
-        border-top: none !important;
-        z-index: 999;
+    /* ==========================
+       CHAT INPUT AREA
+       ========================== */
+    .alpha-chat-input-wrapper {
+        margin: 1.5rem auto 2rem auto;
+        max-width: 560px;   /* desktop width */
+        width: 100%;        /* mobile responsive */
     }
 
-    /* Center and narrow the inner container */
-    [data-testid="stChatInput"] > div {
-        max-width: 720px;
-        margin-left: auto;
-        margin-right: auto;
+    /* Remove default form frame */
+    .alpha-chat-input-wrapper [data-testid="stForm"] {
+        border: none !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        padding: 0 !important;
     }
 
-    /* Purple pill look for the input itself */
-    [data-testid="stChatInput"] [data-baseweb="base-input"] {
+    /* Also clear inner container background (fixes grey edge) */
+    .alpha-chat-input-wrapper [data-testid="stForm"] > div {
+        border: none !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+    }
+
+    /* Input "pill" */
+    .alpha-chat-input-wrapper [data-baseweb="base-input"] {
         background-color: #F6F0FF !important;
         color: #2D1B56 !important;
+        border: none !important;
         border-radius: 999px !important;
-        border: 1px solid #F0E8FF !important;
+        padding-left: 18px !important;
         box-shadow: none !important;
-        padding-left: 16px !important;
-        padding-right: 16px !important;
     }
 
-    [data-testid="stChatInput"] [data-baseweb="base-input"]:focus-within {
+    .alpha-chat-input-wrapper [data-baseweb="base-input"]:focus-within {
         box-shadow: 0 0 0 2px #D6C3FF !important;
-        border: 1px solid #D6C3FF !important;
+        border: none !important;
     }
 
-    [data-testid="stChatInput"] input[type="text"] {
+    .alpha-chat-input-wrapper input[type="text"] {
         background: transparent !important;
+        color: #2D1B56 !important;
+        font-size: 15px !important;
+    }
+
+    /* Make sure any st.text_input also keeps the pill look */
+    .alpha-chat-input-wrapper [data-testid="stTextInput"] > div > div {
+        background-color: #F6F0FF !important;
+        border-radius: 999px !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+
+    .alpha-chat-input-wrapper [data-testid="stTextInput"] input[type="text"] {
+        background-color: transparent !important;
         color: #4A2E88 !important;
         font-size: 15px !important;
+    }
+
+    /* Align input + button */
+    .alpha-chat-input-wrapper [data-testid="column"] {
+        display: flex;
+        align-items: center;
+    }
+
+    /* Send button */
+    .alpha-chat-input-wrapper .stFormSubmitButton > button {
+        background-color: var(--isotopia-light) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 50% !important;
+        width: 42px !important;
+        height: 42px !important;
+        font-size: 20px !important;
+        margin-left: 8px;
+        padding: 0 !important;
+    }
+
+    .alpha-chat-input-wrapper .stFormSubmitButton > button:hover {
+        background-color: #6A5CA8 !important;
     }
 </style>
 """,
@@ -167,7 +205,10 @@ def main():
 
     # ---------- AUTH ----------
     if APP_PASSWORD and not st.session_state.authenticated:
-        st.write("")  # spacing
+        st.write("")
+        st.write("")
+        st.write("")
+
         c1, c2, c3 = st.columns([1, 3, 1])
         with c2:
             pwd = st.text_input(
@@ -188,29 +229,28 @@ def main():
     load_data_if_needed()
     df = st.session_state.consolidated_df
 
-    # Single centered container
-    container = st.container()
+    # Layout: single main column (we'll keep exports inside the centered block)
+    main_col = st.container()
 
-    with container:
-        # Data badge (centered)
+    with main_col:
+        # Centered width wrapper
+        st.markdown("<div class='alpha-main-width'>", unsafe_allow_html=True)
+
+        # Data badge
         st.markdown(
-            f"<div class='data-badge-wrapper'>"
-            f"<span class='data-badge'>✔ Data synced · {len(df):,} rows · {len(df.columns)} columns</span>"
-            f"</div>",
+            f"<div class='data-badge'>✔ Data synced · "
+            f"{len(df):,} rows · {len(df.columns)} columns</div>",
             unsafe_allow_html=True,
         )
 
-        # Download buttons (only if there are messages)
+        # Downloads (if there is any conversation)
         if st.session_state.messages:
             export_df = pd.DataFrame(st.session_state.messages)
-            csv_bytes = export_df.to_csv(index=False).encode("utf-8")
 
-            excel_buf = io.BytesIO()
-            with pd.ExcelWriter(excel_buf, engine="xlsxwriter") as writer:
-                export_df.to_excel(writer, index=False, sheet_name="Chat")
+            c_csv, c_xls = st.columns(2)
 
-            c1, c2 = st.columns(2)
-            with c1:
+            with c_csv:
+                csv_bytes = export_df.to_csv(index=False).encode("utf-8")
                 st.download_button(
                     "💾 Download chat (CSV)",
                     data=csv_bytes,
@@ -218,10 +258,13 @@ def main():
                     mime="text/csv",
                     key="download_chat_csv",
                 )
-            with c2:
+            with c_xls:
+                buf = io.BytesIO()
+                with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+                    export_df.to_excel(writer, index=False, sheet_name="Chat")
                 st.download_button(
                     "📊 Download chat (Excel)",
-                    data=excel_buf.getvalue(),
+                    data=buf.getvalue(),
                     file_name="alpha_chat.xlsx",
                     mime=(
                         "application/vnd.openxmlformats-officedocument."
@@ -230,41 +273,50 @@ def main():
                     key="download_chat_excel",
                 )
 
+        st.markdown("</div>", unsafe_allow_html=True)
+
         # Show existing conversation
         for msg in st.session_state.messages:
             role = msg.get("role", "assistant")
             content = msg.get("content", "")
-
             avatar = "🧪" if role == "user" else "☢️"
+
             with st.chat_message(role, avatar=avatar):
                 st.markdown(content)
 
-        # --- Auto-scroll to bottom after rendering messages ---
-        st.markdown(
-            """
-            <script>
-            const main = window.parent.document.querySelector('section.main');
-            if (main) { main.scrollTop = main.scrollHeight; }
-            </script>
-            """,
-            unsafe_allow_html=True,
-        )
+        # Chat input (centered, narrow)
+        st.markdown('<div class="alpha-main-width alpha-chat-input-wrapper">',
+                    unsafe_allow_html=True)
+        with st.form("alpha-chat-form", clear_on_submit=True):
+            col_input, col_btn = st.columns([12, 1])
 
-        # Chat input at the bottom (sticky via CSS)
-        prompt = st.chat_input(
-            "Ask a question about orders, projections, or major events…"
-        )
+            with col_input:
+                prompt = st.text_input(
+                    "Ask a question",
+                    value="",
+                    label_visibility="collapsed",
+                    placeholder=(
+                        "Ask a question about orders, projections, or major events…"
+                    ),
+                )
 
-        # ---------- PROCESS NEW QUESTION ----------
-        if prompt and prompt.strip():
-            user_text = prompt.strip()
+            with col_btn:
+                submitted = st.form_submit_button("➤")
 
-            # Save + show user message
-            st.session_state.messages.append({"role": "user", "content": user_text})
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # ---------- PROCESS NEW QUESTION ----------
+    if "submitted" in locals() and submitted and prompt.strip():
+        user_text = prompt.strip()
+
+        # Save user message
+        st.session_state.messages.append({"role": "user", "content": user_text})
+
+        # Show latest user + assistant messages immediately
+        with main_col:
             with st.chat_message("user", avatar="🧪"):
                 st.markdown(user_text)
 
-            # Alpha answer
             with st.chat_message("assistant", avatar="☢️"):
                 try:
                     with st.spinner("Thinking…"):
@@ -282,13 +334,24 @@ def main():
                 # Try to render chart if present
                 try:
                     render_chart_from_answer(raw_answer)
-                except Exception:
-                    pass
+                except Exception as e:
+                    st.caption(f"⚠️ Chart error: {e}")
 
-            # Store assistant message
-            st.session_state.messages.append(
-                {"role": "assistant", "content": cleaned}
-            )
+        # Save assistant message
+        st.session_state.messages.append({"role": "assistant", "content": cleaned})
+
+    # ---------- Auto-scroll to bottom ----------
+    st.markdown(
+        """
+        <script>
+        const mainSection = window.parent.document.querySelector('section.main');
+        if (mainSection) {
+            mainSection.scrollTo(0, mainSection.scrollHeight);
+        }
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 if __name__ == "__main__":
