@@ -42,7 +42,7 @@ st.markdown(
 <style>
     /* Main content width + top padding */
     .block-container {
-        padding-top: 1rem;
+        padding-top: 0.5rem !important;
         max-width: 1100px;
     }
 
@@ -58,8 +58,9 @@ st.markdown(
         border-radius: 6px;        /* slightly smaller */
         font-size: 10px;           /* reduced from 13px (~50%) */
         display: inline-block;
-        margin-top: 6px;           /* optional smaller margin */
-        margin-bottom: 12px;       /* optional smaller margin */
+        margin-top: 4px !important;
+        margin-bottom: 6px !important;
+     /* optional smaller margin */
     }
 
 
@@ -98,13 +99,12 @@ st.markdown(
         border-radius: 999px !important;
         border: 1px solid #E0D0FF !important;
         display: flex !important;
-        flex-wrap: nowrap !important;
         align-items: center !important;
-        justify-content: space-between !important;
-        padding: 4px 4px 4px 16px !important;
+        padding: 2px 4px 4px 16px !important;
         gap: 8px !important;
         position: relative !important;
     }
+
 
     /* Input column (FIRST stColumn) */
     [data-testid="stForm"] [data-testid="stHorizontalBlock"] [data-testid="stColumn"]:first-child {
