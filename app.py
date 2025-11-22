@@ -486,12 +486,12 @@ def main():
         # ---- NEW: Render any charts returned in the raw answer ----
         cleaned = strip_chart_blocks(raw_answer)
 
-        # Save everything in one message
         st.session_state.messages.append({
             "role": "assistant",
             "content": cleaned,
-            "raw_answer": raw_answer   # ⭐ IMPORTANT: keep the full text with chart blocks
+            "raw_answer": raw_answer   # keep full answer so charts render
         })
+
 
         st.rerun()
 
