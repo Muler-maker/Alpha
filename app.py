@@ -475,8 +475,18 @@ def main():
         cleaned = strip_chart_blocks(raw_answer)
         st.session_state.messages.append({"role": "assistant", "content": cleaned})
 
-        # Force a rerun so the new messages appear above the fixed footer
+        # ---- NEW: Render any charts returned in the raw answer ----
+        charts = render_chart_from_answer(raw_answer)
+        if charts:
+            for chart in charts:
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": chart
+                })
+
+        # Rerun to show everything
         st.rerun()
+
 
 
 if __name__ == "__main__":
