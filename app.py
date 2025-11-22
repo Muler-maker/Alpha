@@ -480,22 +480,20 @@ def main():
         except Exception as e:
             raw_answer = f"An error occurred: {e}"
 
-        cleaned = strip_chart_blocks(raw_answer)
-        st.session_state.messages.append({"role": "assistant", "content": cleaned})
-
-        # ---- NEW: Render any charts returned in the raw answer ----
+        # Strip chart blocks for the chat text
         cleaned = strip_chart_blocks(raw_answer)
 
+        # Store a single assistant message with both clean text and raw answer
         st.session_state.messages.append({
             "role": "assistant",
             "content": cleaned,
-            "raw_answer": raw_answer   # keep full answer so charts render
+            "raw_answer": raw_answer,
         })
 
-
+        # Rerun so the updated chat (and charts) are rendered above
         st.rerun()
-
 
 
 if __name__ == "__main__":
     main()
+
