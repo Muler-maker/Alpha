@@ -54,13 +54,14 @@ st.markdown(
     .data-badge {
         background-color: #E8F7E4;
         color: #267c3b;
-        padding: 6px 14px;
-        border-radius: 8px;
-        font-size: 13px;
+        padding: 3px 7px;          /* reduced by 50% */
+        border-radius: 6px;        /* slightly smaller */
+        font-size: 10px;           /* reduced from 13px (~50%) */
         display: inline-block;
-        margin-top: 10px;
-        margin-bottom: 18px;
+        margin-top: 6px;           /* optional smaller margin */
+        margin-bottom: 12px;       /* optional smaller margin */
     }
+
 
     /* ==========================
        Form-based chat input styling
