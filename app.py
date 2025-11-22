@@ -427,6 +427,14 @@ def main():
             with st.chat_message(role, avatar=avatar):
                 st.markdown(content)
 
+                # If this message has a chart block, render the chart(s)
+                if role == "assistant" and "raw_answer" in msg:
+                    charts = render_chart_from_answer(msg["raw_answer"])
+                    if charts:
+                        for chart in charts:
+                            st.altair_chart(chart, use_container_width=True)
+
+
         # Spacer so last message is above fixed footer
         st.markdown('<div class="chat-bottom-spacer"></div>', unsafe_allow_html=True)
 
@@ -476,15 +484,15 @@ def main():
         st.session_state.messages.append({"role": "assistant", "content": cleaned})
 
         # ---- NEW: Render any charts returned in the raw answer ----
-        charts = render_chart_from_answer(raw_answer)
-        if charts:
-            for chart in charts:
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": chart
-                })
+        cleaned = strip_chart_blocks(raw_answer)
 
-        # Rerun to show everything
+        # Save everything in one message
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": cleaned,
+            "raw_answer": raw_answer   # ⭐ IMPORTANT: keep the full text with chart blocks
+        })
+
         st.rerun()
 
 
