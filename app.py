@@ -230,7 +230,7 @@ st.markdown(
         margin: 0 !important;
         font-size: 16px !important;
         line-height: 1 !important;
-        color: #6B7280 !important;
+        color: #D3D3D3 !important;
         background: transparent !important;
     }
 
