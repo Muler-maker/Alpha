@@ -86,7 +86,7 @@ def preprocess_orders(df: pd.DataFrame) -> pd.DataFrame:
         "The customer": "Customer",
         "Total amount ordered (mCi)": "Total_mCi",
         "Year": "Year",
-        "Week of supply": "Week",   # fallback only
+        "Week of supply": "Week",  # legacy / fallback
         "Shipping Status": "ShippingStatus",
         "Catalogue description (sold as)": "Product",
         "Distributing company (from Company name)": "Distributor",
@@ -94,23 +94,14 @@ def preprocess_orders(df: pd.DataFrame) -> pd.DataFrame:
         "Account Manager Email": "AccountManagerEmail",
     }
 
-    # Apply basic renaming
+    # Basic renaming
     for old, new in rename_map.items():
         if old in df.columns:
             df.rename(columns={old: new}, inplace=True)
 
-    # --- CANONICAL WEEK LOGIC ---
-    # Always override Week with the Activity-vs-Projection week when available
+    # 🟣 Canonical week: override Week with "Week number for Activity vs Projection" when available
     if "Week number for Activity vs Projection" in df.columns:
         df["Week"] = df["Week number for Activity vs Projection"]
-    # Else fallback: Week stays as renamed from "Week of supply"
-    elif "Week" in df.columns:
-        pass
-    else:
-        raise ValueError(
-            "No week column found: expected 'Week number for Activity vs Projection' "
-            "or 'Week of supply'."
-        )
 
     required = ["Customer", "Total_mCi", "Year", "Week", "ShippingStatus", "Product"]
     missing = [c for c in required if c not in df.columns]
