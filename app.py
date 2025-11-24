@@ -58,8 +58,8 @@ st.markdown(
         border-radius: 6px;        /* slightly smaller */
         font-size: 10px;           /* reduced from 13px (~50%) */
         display: inline-block;
-        margin-top: 6px;           /* optional smaller margin */
-        margin-bottom: 12px;       /* optional smaller margin */
+        margin-top: -8px;           /* optional smaller margin */
+        margin-bottom: 4px;       /* optional smaller margin */
     }
 
 
