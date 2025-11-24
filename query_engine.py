@@ -59,15 +59,14 @@ FIELD_CANDIDATES = {
     "half_year": ["Half year"],
     "country": ["Country"],
     "region": ["Region (from Company name)", "Region"],
+        # Primary week used for analysis = Week number for Activity vs Projection
     "week": [
-        "Week",
-        "Week of supply",
+        "Week number for Activity vs Projection",
+        "Updated week number",       # fallback if you ever use it
+        "Week of supply",            # legacy / backup only
         "Week of Supply",
         "Week_of_supply",
-        "Week number for Activity vs Projection",
-        "Updated week number",
     ],
-
 
     # Distributor entity
     "distributor": [
