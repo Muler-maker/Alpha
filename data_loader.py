@@ -82,7 +82,7 @@ def preprocess_orders(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [c.strip() for c in df.columns]
 
-        rename_map = {
+    rename_map = {
         "The customer": "Customer",
         "Total amount ordered (mCi)": "Total_mCi",
         "Year": "Year",
