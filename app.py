@@ -230,7 +230,7 @@ st.markdown(
         margin: 0 !important;
         font-size: 16px !important;
         line-height: 1 !important;
-        color: #D3D3D3 !important;
+        color: #FFFFFF !important;
         background: transparent !important;
     }
 
@@ -456,7 +456,7 @@ def main():
                 "Ask a question",
                 value="",
                 label_visibility="collapsed",
-                placeholder="How can Alpha help you?",
+                placeholder="What would you like Alpha to explore?",
             )
         with col_btn:
             submitted = st.form_submit_button("➤")
