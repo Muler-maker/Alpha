@@ -60,12 +60,14 @@ FIELD_CANDIDATES = {
     "country": ["Country"],
     "region": ["Region (from Company name)", "Region"],
     "week": [
+        "Week",
         "Week of supply",
         "Week of Supply",
         "Week_of_supply",
         "Week number for Activity vs Projection",
         "Updated week number",
     ],
+
 
     # Distributor entity
     "distributor": [
