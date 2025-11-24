@@ -60,13 +60,17 @@ FIELD_CANDIDATES = {
     "country": ["Country"],
     "region": ["Region (from Company name)", "Region"],
         # Primary week used for analysis = Week number for Activity vs Projection
+    # Canonical week for all analysis = 'Week'
+    # (renamed from "Week number for Activity vs Projection" in preprocess_orders)
     "week": [
+        "Week",                              # ✅ canonical
         "Week number for Activity vs Projection",
-        "Updated week number",       # fallback if you ever use it
-        "Week of supply",            # legacy / backup only
+        "Week of supply",
         "Week of Supply",
         "Week_of_supply",
+        "Updated week number",
     ],
+
 
     # Distributor entity
     "distributor": [
