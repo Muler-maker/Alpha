@@ -909,7 +909,7 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
             hy_val = "H2"
         result = result[result[mapping["half_year"]] == hy_val]
 
-    # Week (explicit single week, not dynamic windows)
+    # Week (explicit single week – NOT for dynamic windows)
     if filters.get("week") and mapping.get("week"):
         result = result[result[mapping["week"]] == filters["week"]]
 
@@ -926,6 +926,7 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
         result = result[contains(mapping["production_site"], filters["production_site"])]
 
     # --- Product filters (NCA / CA / Terbium aware) ---
+
     def _product_mask(series: pd.Series, product_query: str) -> pd.Series:
         s = series.astype(str)
         col = s.str.lower()
@@ -1014,6 +1015,16 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
         )
         result = result[mask]
 
+    # --- Entity comparison: multi-entity filter via compare.entities ---
+    compare = spec.get("compare") or {}
+    entities = compare.get("entities")
+    entity_type = compare.get("entity_type")
+    if entities and entity_type and mapping.get(entity_type):
+        col_name = mapping[entity_type]
+        # Normalize to string for safe matching
+        ent_strs = {str(e) for e in entities}
+        result = result[result[col_name].astype(str).isin(ent_strs)]
+
     # --- Shipping status filter ---
     ship_mode = spec.get("shipping_status_mode", "countable")
     ship_col = mapping.get("shipping_status")
@@ -1034,13 +1045,6 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
         elif ship_mode == "all":
             # Do NOT filter by status – keep everything
             pass
-
-    # ------------------------------------------
-    # Apply dynamic week window (time_window)
-    # ------------------------------------------
-    time_window = spec.get("time_window")
-    if time_window and time_window.get("mode"):
-        result = _apply_time_window(result, spec)
 
     return result
 
