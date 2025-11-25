@@ -1440,12 +1440,10 @@ def _run_aggregation(
             return grouped_df, total_mci
 
         # --------------------------------------------------------------
-        # --------------------------------------------------------------
         # 2) PRODUCT COMPARISON (CA vs NCA, etc.) ON product_sold
+        #    entities = ["CA", "NCA"], entity_type = "product_sold"
         # --------------------------------------------------------------
         if entities and entity_type in ("product_sold", "product_catalogue"):
-
-            # Which column describes the product? ("Catalogue description (sold as)")
             prod_col = (
                 mapping.get("product_sold")
                 if entity_type == "product_sold"
@@ -1454,57 +1452,60 @@ def _run_aggregation(
             if not prod_col or prod_col not in df_filtered.columns:
                 return None, float("nan")
 
-            # Normalize the product column for CA/NCA matching
-            col_lower = df_filtered[prod_col].astype(str).str.lower()
+            def _product_subset(df: pd.DataFrame, label: str) -> pd.DataFrame:
+                label = str(label).lower()
+                series = df[prod_col].astype(str).str.lower()
 
-            # Collect the rows for each entity (CA, NCA)
-            collected_rows = []
+                # NCA bucket (non-carrier-added Lutetium, excluding Terbium)
+                if label == "nca":
+                    nca_like = series.str.contains(
+                        "n.c.a|nca|non carrier|non-carrier", regex=True
+                    )
+                    terb_like = series.str.contains("terb|tb-161|tb161|161tb", regex=True)
+                    return df[nca_like & ~terb_like]
+
+                # CA bucket (carrier-added Lutetium, excluding Terbium)
+                if label == "ca":
+                    ca_like = series.str.contains("c.a|carrier added", regex=True)
+                    terb_like = series.str.contains("terb|tb-161|tb161|161tb", regex=True)
+                    return df[ca_like & ~terb_like]
+
+                # Generic fallback: substring match
+                return df[series.str.contains(label, na=False)]
+
+            rows: List[pd.DataFrame] = []
             for ent in entities:
-                ent_lower = str(ent).lower()
-
-                # Match exactly CA or NCA inside the sold-as column
-                mask = col_lower == ent_lower
-
-                df_part = df_filtered.loc[mask].copy()
-                if df_part.empty:
+                sub = _product_subset(df_filtered, ent)
+                if sub.empty:
                     continue
+                sub = sub.copy()
+                sub["_CompareEntity"] = ent
+                rows.append(sub)
 
-                # Mark which entity this belongs to
-                df_part["_CompareEntity"] = ent
-                collected_rows.append(df_part)
-
-            if not collected_rows:
+            if not rows:
                 return None, float("nan")
 
-            df_compare = pd.concat(collected_rows, ignore_index=True)
+            df_compare = pd.concat(rows, ignore_index=True)
 
-            # ------------------------------------------------------
-            # Honor group_by (Year, Quarter, Week, Half year, etc.)
-            # ------------------------------------------------------
-            extra_groups = []
-            for g in group_by:
-
-                # Skip the product_sold dimension itself
-                if g in ("product_sold", "product_catalogue"):
-                    continue
-
-                real_col = mapping.get(g)
-                if real_col and real_col in df_compare.columns:
-                    extra_groups.append(real_col)
-
-            # Final grouping: CompareEntity + any desired time dims
-            group_cols_with_entity = ["_CompareEntity"] + extra_groups
-
-            grouped_df = (
-                df_compare.groupby(group_cols_with_entity, as_index=False)[total_col]
-                .sum()
-            )
-            grouped_df[total_col] = (
-                grouped_df[total_col].fillna(0).round(0).astype("int64")
+            # 🔑 Grouping: CompareEntity + any requested dimensions (year, quarter, week, etc.)
+            extra_group_cols = [
+                mapping[g]
+                for g in group_by
+                if g and mapping.get(g)
+            ]
+            group_cols_with_entity = (
+                ["_CompareEntity"] + extra_group_cols
+                if extra_group_cols
+                else ["_CompareEntity"]
             )
 
+            grouped_df = df_compare.groupby(
+                group_cols_with_entity, as_index=False
+            )[total_col].sum()
+            grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
             total_mci = float(df_compare[total_col].sum())
             return grouped_df, total_mci
+
 
 
 
