@@ -1482,13 +1482,27 @@ def _run_aggregation(
                 return None, float("nan")
 
             df_compare = pd.concat(rows, ignore_index=True)
+            df_compare = pd.concat(rows, ignore_index=True)
 
-            # Usually we just want CA vs NCA totals; extra dimensions are already
-            # fixed by filters (e.g. week 25, year 2025), so group by CompareEntity
-            grouped_df = df_compare.groupby(["_CompareEntity"], as_index=False)[total_col].sum()
+            # Respect group_by (e.g. ["product_sold", "year"]) so we can compare
+            # CA vs NCA per year / per quarter / per week etc.
+            extra_group_cols = []
+            for g in group_by:
+                if g == entity_type:
+                    # "product_sold" itself is represented by _CompareEntity
+                    continue
+                col_name = mapping.get(g)
+                if col_name and col_name in df_compare.columns:
+                    extra_group_cols.append(col_name)
+
+            # Always group by _CompareEntity + any other requested dimensions (like Year)
+            group_cols_with_entity = ["_CompareEntity"] + extra_group_cols if extra_group_cols else ["_CompareEntity"]
+
+            grouped_df = df_compare.groupby(group_cols_with_entity, as_index=False)[total_col].sum()
             grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
             total_mci = float(df_compare[total_col].sum())
             return grouped_df, total_mci
+
 
         # --------------------------------------------------------------
         # 3) TIME-TO-TIME COMPARISON (if period_a / period_b given)
