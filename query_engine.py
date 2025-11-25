@@ -1986,6 +1986,29 @@ def answer_question_from_df(
     spec = _ensure_all_statuses_when_grouped(spec)
     spec = _inject_customer_from_question(consolidated_df, spec)
     spec = _disambiguate_customer_vs_distributor(consolidated_df, spec)
+        # 🔧 Heuristic override for ambiguous "growth rates over ..." questions
+    q_lower = question.lower()
+    if spec.get("aggregation") == "growth_rate":
+        compare = spec.get("compare") or {}
+        if isinstance(compare, dict):
+            period_a = compare.get("period_a") or {}
+            period_b = compare.get("period_b") or {}
+        else:
+            period_a, period_b = {}, {}
+
+        time_keys = ["year", "week", "month", "quarter", "half_year"]
+        has_explicit_a = any(period_a.get(k) is not None for k in time_keys)
+        has_explicit_b = any(period_b.get(k) is not None for k in time_keys)
+
+        # If the question is generic ("growth rates over ...") but has no explicit A/B periods,
+        # fall back to simple time-series sums so we can show a clean pivot.
+        if not (has_explicit_a and has_explicit_b):
+            if (
+                "growth rates over" in q_lower
+                or "growth rate over" in q_lower
+                or "growth rates per" in q_lower
+            ):
+                spec["aggregation"] = "sum_mci"
 
     df_filtered = _apply_filters(consolidated_df, spec)
     group_df, numeric_value = _run_aggregation(df_filtered, spec, consolidated_df)
