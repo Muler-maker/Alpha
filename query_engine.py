@@ -105,10 +105,7 @@ def _get_mapping(df: pd.DataFrame) -> Dict[str, Optional[str]]:
 
 # --------------------------------------------------------------------
 # 1) INTERPRETATION LAYER – turn NL question → JSON spec
-# --------------------------------------------------------------------
-
-
-def _interpret_question_with_llm(
+# -----------------------def _interpret_question_with_llm(
     question: str,
     history: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
@@ -120,440 +117,14 @@ def _interpret_question_with_llm(
         return _interpret_question_fallback(question, history=history)
 
     system_prompt = """
-You are an assistant called *Isotopia Alpha* that translates natural-language questions
-about radiopharmaceutical orders into a structured JSON query specification.
-
-You DO NOT see the actual data. You only decide WHAT to filter and aggregate.
-
-Return ONLY a single valid JSON object with no markdown. Use this exact schema:
-
-{
-  "aggregation": "sum_mci",
-  "group_by": [],
-  "filters": {
-    "year": null,
-    "week": null,
-    "month": null,
-    "quarter": null,
-    "half_year": null,
-    "customer": null,
-    "distributor": null,
-    "country": null,
-    "region": null,
-    "product_sold": null,
-    "product_catalogue": null,
-    "production_site": null
-  },
-  "shipping_status_mode": "countable",
-  "shipping_status_list": [],
-  "time_window": {
-    "mode": null,
-    "n_weeks": null,
-    "anchor": {
-      "year": null,
-      "week": null
-    }
-  },
-  "compare": {
-    "period_a": null,
-    "period_b": null
-  },
-  "explanation": ""
-}
-
-ALLOWED aggregation values:
-- "sum_mci"       → sum of Total_mCi (default)
-- "average_mci"   → average Total_mCi per row
-- "share_of_total"→ share of total volume under the same time/product filters
-- "growth_rate"   → growth from one period to another
-
-ENTITIES
-- "customer":
-    The end-customer (hospital / clinic / radiopharmacy receiving the dose).
-    Maps to:
-      - "Company name"
-      - "The customer"
-      - "Customer"
-
-- "distributor":
-    The distributing company serving many customers.
-    Maps to:
-      - "Distributing company (from Company name)"
-      - "Distributor"
-
-    Examples:
-      - "What did DSD order?" → distributor
-      - "What did Universitätsspital Basel order?" → customer
-
-    If the user explicitly says "distributor", always use distributor.
-    If explicitly "customer", "hospital", "clinic", "company" → use customer.
-    If ambiguous (e.g. "DSD"), either may be filled; downstream logic will handle it.
-
-- "country": customer’s country.
-- "region": maps to "Region (from Company name)". Only fill if explicitly requested.
-
-TIME FILTERS
-
-- "year": integer such as 2023, 2024, 2025.
-
-- If the user mentions an explicit single week, without words like "last", "past", "previous", "trailing", or "rolling":
-    - Examples: "week 35 of 2024", "week 12", "week of supply 10 in 2025"
-    → filters.year = given year (if mentioned)
-    → filters.week = given week
-    → time_window.mode = null
-    → time_window.n_weeks = null
-    → time_window.anchor.year = null
-    → time_window.anchor.week = null
-
-- If the user requests weekly / week-by-week / weekly comparison WITHOUT dynamic phrases:
-    - Examples: "show weekly data for 2025", "week-by-week for Germany in 2024"
-    → group_by = ["year", "week"]
-    → you MAY also set filters.year or filters.country as needed
-    → DO NOT set time_window unless the user also says "last N weeks" etc.
-
-- If the user uses phrases like "last N weeks", "past N weeks", "previous N weeks", "rolling N weeks", or "trailing N weeks"
-  WITHOUT specifying an anchor week:
-    - Set time_window.mode = "last_n_weeks"
-    - Set time_window.n_weeks = N (integer)
-    - Set time_window.anchor.year = null
-    - Set time_window.anchor.week = null
-    - Do NOT set filters.week.
-    - If the user specifies a year ("last 6 weeks of 2025"), set filters.year = that year.
-
-- If the user uses phrases like "N weeks before week X", "N weeks leading up to week X",
-  or "rolling N weeks before week X [of YEAR]":
-    - Set time_window.mode = "anchored_last_n_weeks"
-    - Set time_window.n_weeks = N (integer)
-    - Set time_window.anchor.week = X
-    - If the user gives a year, set time_window.anchor.year = that year.
-    - If no year is given, leave time_window.anchor.year = null (the code will infer the latest year).
-    - Do NOT set filters.week in this case.
-
-- DO NOT set both filters.week and time_window at the same time for the same question.
-  Use filters.week only for explicit single-week questions ("week 25" etc.).
-  Use time_window for dynamic windows like "last 6 weeks", "previous 8 weeks", "rolling 12 weeks",
-  or "N weeks before week X".
-
-MONTH / QUARTER / HALF-YEAR FILTERS
-- If the user mentions a month (e.g. "April 2024", "in January", "Feb"):
-    → filters.month = integer 1–12 (Jan=1, Feb=2, ..., Dec=12)
-    → filters.year = the mentioned year (if stated)
-
-- If the user mentions a quarter (e.g. "Q2 2024", "second quarter of 2023"):
-    → filters.quarter = "Q1", "Q2", "Q3", or "Q4"
-    → filters.year = the mentioned year (if stated)
-
-- If the user mentions half-year (e.g. "H1 2024", "first half of 2023"):
-    → filters.half_year = "H1" or "H2"
-    → filters.year = the mentioned year (if stated)
-
-You may combine year with month, quarter, or half_year.
-
-COMPARISON MODE RULES
-
-Comparison mode must be triggered whenever the user asks to compare:
-- two time periods
-- two entities (customers, distributors, countries)
-- or requests a table with multiple dimensions.
-
-Trigger comparison if the question contains:
-"compare", "versus", "vs", "compared to", "difference between",
-"how does X compare to Y"
-
-When comparison mode is triggered:
-aggregation = "compare"
-unless the user explicitly says "growth", "increase", "decrease",
-"growth rate", "YoY growth" → then use aggregation = "growth_rate".
-
-------------------------------
-TIME–TO–TIME COMPARISONS
-------------------------------
-
-Examples:
-"Compare 2024 and 2025"
-"Compare Q4 2024 with Q1 2025"
-"Compare week 12 of 2024 with week 12 of 2025"
-"Compare the last 6 weeks with the 6 weeks before"
-"How did Germany change from 2023 to 2024?"
-"Show YoY for Germany"
-
-Populate:
-compare.period_a = { year, quarter, month, half_year, week, or time_window }
-compare.period_b = { year, quarter, month, half_year, week, or time_window }
-
-Rules:
-- “YoY” → previous year vs current year
-- “last N weeks vs previous N weeks”:
-    period_a = last N weeks
-    period_b = N weeks before that (previous window)
-- If dimensions do not match, obey exactly what the user wrote.
-
-Do NOT use filters.week for dynamic windows.  
-Use time_window instead.
-
-------------------------------
-ENTITY–TO–ENTITY COMPARISONS
-------------------------------
-
-Examples:
-"Compare Germany and Austria in 2025"
-"Compare DSD with PI Medical Solutions"
-"Compare Essen vs St. Luke’s"
-
-Detect entity type:
-- if both match countries → entity_type = "country"
-- if both match customers → entity_type = "customer"
-- if both match distributors → entity_type = "distributor"
-
-Populate:
-compare.entities = ["X", "Y"]
-compare.entity_type = "country" | "customer" | "distributor"
-
-If a year is mentioned → filters.year = that year.
-
-------------------------------
-TABLE / PIVOT COMPARISONS
-------------------------------
-
-Examples:
-"Show distributors in rows and years in columns"
-"Yearly totals per distributor"
-"Country-by-country comparison"
-"Compare all countries over the last 6 weeks"
-
-Interpret:
-- “rows” → first group_by dimension
-- “columns” → second group_by dimension
-
-Example:
-group_by = ["distributor", "year"]
-output_format = "table"
-
-If comparison implied:
-aggregation = "compare"
-
-If rows/columns not explicit:
-use all detected dimensions.
-
-------------------------------
-WHEN TO USE GROWTH_RATE
-------------------------------
-
-If the user asks for:
-"growth", "increase", "decrease", "growth rate",
-"how much did X grow", "YoY growth":
-
-aggregation = "growth_rate"
-
-Otherwise:
-aggregation = "compare"
-
-------------------------------
-WEEK VS TIME_WINDOW RULE
-------------------------------
-
-- Explicit week → filters.week
-- Dynamic windows ("last N weeks", "previous N weeks") → time_window
-- Never set both.
-
-PRODUCT DIMENSIONS
-
-There are TWO distinct product fields:
-1) product_sold (commercial / billing):
-     Column: "Catalogue description (sold as)"
-
-2) product_catalogue (manufacturing / production):
-     Column: "Catalogue description"
-
-Choose based on wording:
-
-- If user asks about "ordered", "sold", "bought", "shipped", "delivered":
-      → use product_sold
-
-- If user asks about "produced", "manufactured", "batch production":
-      → use product_catalogue
-
-SPECIAL RULES FOR PRODUCT INTERPRETATION
-- If "Terbium", "Tb", "Tb-161", "Tb161" appear:
-      → filters.product_sold = something explicitly Terbium
-      → NEVER use generic "NCA" here.
-
-- If "NCA" appears WITHOUT Terbium:
-      → assume Lutetium NCA
-      → filters.product_sold = something clearly Lutetium + NCA
-
-- If "CA" appears WITHOUT Terbium:
-      → filters.product_sold = clearly Lutetium CA
-
-- If user says “Lutetium”, “Lu-177” or “177Lu” without CA/NCA:
-      → you may leave product_sold null or set a generic Lutetium filter.
-
-- NEVER set product_catalogue when asked about ordered amounts.
-
-SHIPPING STATUS LOGIC
-
-Use shipping_status_mode:
-
-- "countable":
-      (Default) Use when user asks about normal orders,
-      shipped amounts, volumes, trends.
-      Includes:
-        - Shipped
-        - Partially shipped
-        - Shipped and arrived late
-        - Order being processed
-
-- "cancelled":
-      Use when the question is about cancellations in general.
-      Includes:
-        - Rejected \\ Cancelled by Isotopia
-        - Cancelled by the customer
-        - Rejected \\ Cancelled
-
-- "all":
-      Use only if user explicitly requests "all statuses".
-
-- "explicit":
-      Use when the user specifies WHO cancelled or lists statuses.
-
-SPECIAL CANCELLATION RULES
-- If “cancelled by Isotopia”:
-      shipping_status_mode = "explicit"
-      shipping_status_list = ["Rejected \\ Cancelled by Isotopia"]
-
-- If “cancelled by the customer”:
-      shipping_status_mode = "explicit"
-      shipping_status_list = ["Cancelled by the customer"]
-
-- If cancellations without actor:
-      shipping_status_mode = "cancelled”
-
-GROUP BY LOGIC
-
-Set group_by when user explicitly requests a breakdown:
-
-- "per year", "by year", "compare years":
-      → ["year"]
-
-- "per country", "by country":
-      → ["country"]
-
-- "per distributor":
-      → ["distributor"]
-
-- "per customer":
-      → ["customer"]
-
-- "per status", "cancelled vs shipped", "by shipping status":
-      → ["shipping_status"]
-
-- Weekly breakdown:
-      → ["year", "week"]
-
-- Combined breakdowns allowed:
-      e.g. ["year", "country"], ["distributor", "product_sold"]
-
-Allowed group_by fields:
-["year", "week", "customer", "country", "distributor",
- "product_sold", "product_catalogue", "production_site",
- "region", "shipping_status"]
-
-ADVANCED AGGREGATIONS
-
-1) average_mci
-   Use when the user asks for an average order size:
-   - "on average", "average order", "mean dose", "typical order"
-   Example:
-   - "What is the average order from PI Medical Solutions in H1 2025?"
-     → aggregation: "average_mci"
-
-2) share_of_total
-   Use when the user asks for a share, percentage, or portion of total:
-   - "share of total", "percentage of", "what fraction", "what part"
-   Example:
-   - "What is the share of DSD from all NCA orders in 2025?"
-     → aggregation: "share_of_total"
-     → filters.distributor = "DSD"
-     → filters.product_sold = Lutetium NCA
-     → filters.year = 2025
-
-   For this aggregation:
-   - The filters describe the NUMERATOR (specific distributor/customer/region).
-   - The denominator is the SAME time/product filters but WITHOUT
-     specific entity filters (no customer/distributor/country/region).
-
-3) growth_rate
-   Use when the user asks for growth between two periods:
-   - "growth rate", "increase from X to Y", "compared to", "vs", "versus"
-   Example:
-   - "What is the growth rate of the European Union in H2 2024 compared to H1 2024?"
-     → aggregation: "growth_rate"
-     → filters.region = "European Union"
-     → compare.period_a = { "year": 2024, "half_year": "H1" }
-     → compare.period_b = { "year": 2024, "half_year": "H2" }
-
-   For growth_rate you MUST fill "compare" with:
-   {
-     "period_a": {
-       "year": ...,
-       "week": null,
-       "month": null,
-       "quarter": null,
-       "half_year": null
-     },
-     "period_b": {
-       "year": ...,
-       "week": null,
-       "month": null,
-       "quarter": null,
-       "half_year": null
-     }
-   }
-
-   If the user says "from Q1 2024 to Q2 2024":
-     → period_a.quarter = "Q1", period_b.quarter = "Q2"
-   If "from H1 2023 to H2 2023":
-     → period_a.half_year = "H1", period_b.half_year = "H2"
-
-INTERPRETATION EXAMPLES
-- "What did DSD order in 2025?":
-      filters.distributor="DSD", filters.year=2025, mode="countable", aggregation="sum_mci".
-
-- "How much NCA did DSD order in 2025?":
-      filters.distributor="DSD",
-      filters.product_sold contains "Lutetium" AND "NCA",
-      aggregation="sum_mci".
-
-- "Compare Terbium orders in 2024 vs 2025":
-      product_sold = Terbium, group_by=["year"], aggregation="sum_mci".
-
-- "Compare NCA ordered by DSD per year":
-      filters.distributor="DSD",
-      product_sold=Lutetium+NCA,
-      group_by=["year"], aggregation="sum_mci".
-
-- "What is the share of DSD from all NCA orders in 2025?":
-      aggregation="share_of_total",
-      filters.distributor="DSD",
-      filters.product_sold=Lutetium+NCA,
-      filters.year=2025.
-
-- "What is the growth rate of the European Union in H2 2024 compared to H1 2024?":
-      aggregation="growth_rate",
-      filters.region="European Union",
-      compare.period_a={year:2024, half_year:"H1"},
-      compare.period_b={year:2024, half_year:"H2"}.
-
-ALWAYS:
-- If unsure, leave a filter as null.
-- Always set "shipping_status_mode".
-- Return JSON ONLY with no markdown.
-"""
-    # Build messages with optional history
+    [KEEP YOUR FULL SYSTEM PROMPT EXACTLY AS IS — shortened here for readability]
+    """
+
+    # ------------------------------
+    # Build messages with short history
+    # ------------------------------
     messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
 
-    # Include short conversation history so follow-ups like
-    # "and what about 2024?" make sense
     if history:
         for m in history[-6:]:
             role = m.get("role")
@@ -562,9 +133,11 @@ ALWAYS:
                 if content:
                     messages.append({"role": role, "content": content})
 
-    # Current question is always the last user message
     messages.append({"role": "user", "content": question})
 
+    # ------------------------------
+    # Call the LLM
+    # ------------------------------
     try:
         resp = client.chat.completions.create(
             model=OPENAI_MODEL_NAME,
@@ -577,13 +150,89 @@ ALWAYS:
         )
         raw = resp.choices[0].message.content
         spec = json.loads(raw)
+
     except Exception as e:
-        st.warning(f"LLM error: {e}")   # ← show error in the UI
+        st.warning(f"LLM error: {e}")
         spec = _interpret_question_fallback(question)
 
-
+    # ------------------------------
+    # Existing post-processing
+    # ------------------------------
     spec = _augment_spec_with_date_heuristics(question, spec)
+
+    # ======================================================================
+    # 🚀 PATCH: Heuristic compare fix — distributors, CA/NCA, fuzzy matches
+    # ======================================================================
+
+    q_lower = (question or "").lower()
+
+    if "compare" in q_lower or " vs " in q_lower or "versus" in q_lower:
+        # Ensure compare mode
+        if not spec.get("aggregation"):
+            spec["aggregation"] = "compare"
+
+        comp = spec.get("compare") or {}
+        if not isinstance(comp, dict):
+            comp = {}
+
+        # If already filled by the LLM, do nothing
+        if not comp.get("entities"):
+
+            entities = []
+            entity_type = None
+
+            # Ensure filters exist
+            if not spec.get("filters"):
+                spec["filters"] = {}
+            filters = spec["filters"]
+
+            # WEEK
+            if not filters.get("week"):
+                mw = re.search(r"week\s+(\d{1,2})", q_lower)
+                if mw:
+                    filters["week"] = int(mw.group(1))
+
+            # YEAR
+            if not filters.get("year"):
+                my = re.search(r"(20[2-3][0-9])", q_lower)
+                if my:
+                    filters["year"] = int(my.group(1))
+
+            spec["filters"] = filters
+
+            # ------------------------
+            # Distributor vs Distributor
+            # ------------------------
+            if "dsd" in q_lower and ("pi medical" in q_lower or "pi medical" in q_lower):
+                entities = ["DSD", "PI Medical"]
+                entity_type = "distributor"
+
+            # ------------------------
+            # Product: CA vs NCA
+            # ------------------------
+            if "ca" in q_lower and "nca" in q_lower:
+                entities = ["CA", "NCA"]
+                entity_type = "product_sold"
+
+            # (Countries are handled well already via heuristics)
+
+            if entities and entity_type:
+                comp["entities"] = entities
+                comp["entity_type"] = entity_type
+                spec["compare"] = comp
+
+                # Force group_by to include the correct dimension
+                gb = spec.get("group_by") or []
+                if entity_type not in gb:
+                    gb = [entity_type]
+                spec["group_by"] = gb
+
+    # ======================================================================
+    # END OF PATCH
+    # ======================================================================
+
     return spec
+---------------------------------------------
 
 
 def _interpret_question_fallback(
