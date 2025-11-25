@@ -640,33 +640,37 @@ def _interpret_question_fallback(
     # naive cancellation detection
     if "cancel" in q_lower or "reject" in q_lower:
         spec["shipping_status_mode"] = "cancelled"
-# ----- Special rule: explicit compare with single week -----
+
+    # ----- Special rule: explicit compare with single week -----
     if "compare" in q_lower and "week" in q_lower:
-        # Detect explicit week number
+        # Extract explicit week
         m = re.search(r"week\s+(\d{1,2})", q_lower)
         if m:
-            week_val = int(m.group(1))
-            spec["filters"]["week"] = week_val
+            spec["filters"]["week"] = int(m.group(1))
 
-        # Detect explicit year
+        # Extract explicit year
         y = re.search(r"(20[2-3][0-9])", q_lower)
         if y:
             spec["filters"]["year"] = int(y.group(1))
 
-        # Decide grouping:
-        # If both X and Y are countries → group by country
-        if any(c in q_lower for c in ["germany", "france", "austria", "israel", "brazil"]):
+        # COUNTRY compare detection
+        country_list = [
+            "germany","france","austria","israel","brazil","netherlands","china",
+            "united states","switzerland","italy","spain","portugal","canada"
+        ]
+        countries_in_q = [c for c in country_list if c in q_lower]
+
+        if len(countries_in_q) >= 2:
             spec["group_by"] = ["country"]
 
-        # If both X and Y are distributors → group by distributor
-        if "dsd" in q_lower or "pi medical" in q_lower:
+        # DISTRIBUTOR compare detection
+        if "dsd" in q_lower and "pi medical" in q_lower:
             spec["group_by"] = ["distributor"]
 
-        # If both X and Y are customers → group by customer
-        if "hospital" in q_lower or "clinic" in q_lower or "essen" in q_lower:
+        # CUSTOMER compare detection
+        customer_keywords = ["hospital", "medical center", "clinic", "essen"]
+        if sum(k in q_lower for k in customer_keywords) >= 2:
             spec["group_by"] = ["customer"]
-
-    return spec
 
 
 def _augment_spec_with_date_heuristics(question: str, spec: Dict[str, Any]) -> Dict[str, Any]:
