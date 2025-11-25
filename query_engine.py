@@ -916,7 +916,6 @@ def _force_cancellation_status_from_text(question: str, spec: Dict[str, Any]) ->
         return spec
 
     return spec
-
 def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     """Apply all filters from the spec to the DataFrame."""
     if df is None or not isinstance(df, pd.DataFrame):
@@ -1074,15 +1073,10 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
         )
         result = result[mask]
 
-    # --- Entity comparison: multi-entity filter via compare.entities ---
-    compare = spec.get("compare") or {}
-    entities = compare.get("entities")
-    entity_type = compare.get("entity_type")
-    if entities and entity_type and mapping.get(entity_type):
-        col_name = mapping[entity_type]
-        # Normalize to string for safe matching
-        ent_strs = {str(e) for e in entities}
-        result = result[result[col_name].astype(str).isin(ent_strs)]
+    # ❌ IMPORTANT: we removed the old block that did:
+    #    entities = compare.get("entities") ...
+    #    result = result[result[col_name].isin(entities)]
+    # That was wiping out rows for fuzzy entities like "DSD Pharma GmbH" vs "DSD".
 
     # --- Shipping status filter ---
     ship_mode = spec.get("shipping_status_mode", "countable")
@@ -1100,10 +1094,6 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
         elif ship_mode == "explicit" and spec.get("shipping_status_list"):
             # Explicit list of statuses
             result = result[result[ship_col].isin(spec["shipping_status_list"])]
-
-        elif ship_mode == "all":
-            # Do NOT filter by status – keep everything
-            pass
 
     return result
 
