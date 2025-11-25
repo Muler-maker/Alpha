@@ -1860,16 +1860,33 @@ def answer_question_from_df(
                 pivot_df.columns = [str(c) for c in pivot_df.columns]
                 group_df = pivot_df
             except Exception:
-                # If anything goes wrong, keep original layout
                 pass
         else:
-            # Only Year and Total_mCi → single row with years as columns
+            # Only Year + Total_mCi → single row with years as columns
             years = sorted(group_df["Year"].unique())
             wide = pd.DataFrame([{
                 str(y): float(group_df.loc[group_df["Year"] == y, "Total_mCi"].sum())
                 for y in years
             }])
             group_df = wide
+
+    # --- Ensure all mCi values and year columns are whole numbers, no scientific notation ---
+    if group_df is not None and not group_df.empty:
+        for col in group_df.columns:
+            col_lower = str(col).lower()
+            is_year_col = col.isdigit()  # e.g. "2022", "2023"
+
+            if "mci" in col_lower or is_year_col:
+                try:
+                    group_df[col] = (
+                        pd.to_numeric(group_df[col], errors="coerce")
+                        .fillna(0)
+                        .round(0)
+                        .astype(int)
+                    )
+                except Exception:
+                    pass
+
 
 
     filters = spec.get("filters", {}) or {}
