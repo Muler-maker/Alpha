@@ -1330,6 +1330,23 @@ def _run_aggregation(
     # Treat "compare" as a sum-based aggregation for now
     if aggregation == "compare":
         aggregation = "sum_mci"
+    # Determine aggregation mode
+    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
+
+    # ---------------------------------------------------------
+    # TEMPORARY FIX FOR FALLBACK "compare" QUESTIONS
+    # The real full comparison mode will come soon.
+    # For now: treat "compare" as a grouped SUM.
+    # Example: "Compare Germany to Austria in week 25 of 2025"
+    # → fallback sets group_by=["country"], aggregation="compare"
+    # → we convert it to standard "sum_mci"
+    # ---------------------------------------------------------
+    if aggregation == "compare":
+        aggregation = "sum_mci"
+
+    group_by = spec.get("group_by") or []
+    group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
+
 
     # --- SUM (default) ---
     if aggregation == "sum_mci":
