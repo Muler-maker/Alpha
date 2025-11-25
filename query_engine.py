@@ -146,6 +146,14 @@ Return ONLY a single valid JSON object with no markdown. Use this exact schema:
   },
   "shipping_status_mode": "countable",
   "shipping_status_list": [],
+  "time_window": {
+    "mode": null,
+    "n_weeks": null,
+    "anchor": {
+      "year": null,
+      "week": null
+    }
+  },
   "compare": {
     "period_a": null,
     "period_b": null
@@ -185,15 +193,46 @@ ENTITIES
 - "region": maps to "Region (from Company name)". Only fill if explicitly requested.
 
 TIME FILTERS
+
 - "year": integer such as 2023, 2024, 2025.
 
-- If the user mentions a specific week:
-    - "week 35 of 2024", "week 12", "week of supply 10 in 2025"
-    → filters.year = given year
+- If the user mentions an explicit single week, without words like "last", "past", "previous", "trailing", or "rolling":
+    - Examples: "week 35 of 2024", "week 12", "week of supply 10 in 2025"
+    → filters.year = given year (if mentioned)
     → filters.week = given week
+    → time_window.mode = null
+    → time_window.n_weeks = null
+    → time_window.anchor.year = null
+    → time_window.anchor.week = null
 
-- If the user requests weekly / week-by-week / weekly comparison:
+- If the user requests weekly / week-by-week / weekly comparison WITHOUT dynamic phrases:
+    - Examples: "show weekly data for 2025", "week-by-week for Germany in 2024"
     → group_by = ["year", "week"]
+    → you MAY also set filters.year or filters.country as needed
+    → DO NOT set time_window unless the user also says "last N weeks" etc.
+
+- If the user uses phrases like "last N weeks", "past N weeks", "previous N weeks", "rolling N weeks", or "trailing N weeks"
+  WITHOUT specifying an anchor week:
+    - Set time_window.mode = "last_n_weeks"
+    - Set time_window.n_weeks = N (integer)
+    - Set time_window.anchor.year = null
+    - Set time_window.anchor.week = null
+    - Do NOT set filters.week.
+    - If the user specifies a year ("last 6 weeks of 2025"), set filters.year = that year.
+
+- If the user uses phrases like "N weeks before week X", "N weeks leading up to week X",
+  or "rolling N weeks before week X [of YEAR]":
+    - Set time_window.mode = "anchored_last_n_weeks"
+    - Set time_window.n_weeks = N (integer)
+    - Set time_window.anchor.week = X
+    - If the user gives a year, set time_window.anchor.year = that year.
+    - If no year is given, leave time_window.anchor.year = null (the code will infer the latest year).
+    - Do NOT set filters.week in this case.
+
+- DO NOT set both filters.week and time_window at the same time for the same question.
+  Use filters.week only for explicit single-week questions ("week 25" etc.).
+  Use time_window for dynamic windows like "last 6 weeks", "previous 8 weeks", "rolling 12 weeks",
+  or "N weeks before week X".
 
 MONTH / QUARTER / HALF-YEAR FILTERS
 - If the user mentions a month (e.g. "April 2024", "in January", "Feb"):
@@ -209,6 +248,7 @@ MONTH / QUARTER / HALF-YEAR FILTERS
     → filters.year = the mentioned year (if stated)
 
 You may combine year with month, quarter, or half_year.
+
 
 PRODUCT DIMENSIONS
 
@@ -464,7 +504,18 @@ def _interpret_question_fallback(
         },
         "shipping_status_mode": "countable",
         "shipping_status_list": [],
-        "compare": {"period_a": None, "period_b": None},
+        "time_window": {
+            "mode": None,          # e.g. "last_n_weeks", "anchored_last_n_weeks"
+            "n_weeks": None,       # integer, e.g. 6 for "last 6 weeks"
+            "anchor": {
+                "year": None,      # optional anchor year, e.g. 2025
+                "week": None       # optional anchor week, e.g. 20
+            }
+        },
+        "compare": {
+            "period_a": None,
+            "period_b": None
+        },
         "explanation": "Heuristic interpretation without LLM.",
     }
 
@@ -696,7 +747,6 @@ def _force_cancellation_status_from_text(question: str, spec: Dict[str, Any]) ->
 
     return spec
 
-
 def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     """Apply all filters from the spec to the DataFrame."""
     if df is None or not isinstance(df, pd.DataFrame):
@@ -715,7 +765,7 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     if filters.get("customer") and mapping.get("customer"):
         result = result[contains(mapping["customer"], filters["customer"])]
 
-    # Distributor  ✅ fixed bracket bug here
+    # Distributor
     if filters.get("distributor") and mapping.get("distributor"):
         result = result[contains(mapping["distributor"], filters["distributor"])]
 
@@ -748,7 +798,7 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
             hy_val = "H2"
         result = result[result[mapping["half_year"]] == hy_val]
 
-    # Week
+    # Week (explicit single week, not dynamic windows)
     if filters.get("week") and mapping.get("week"):
         result = result[result[mapping["week"]] == filters["week"]]
 
@@ -760,12 +810,11 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     if filters.get("region") and mapping.get("region"):
         result = result[contains(mapping["region"], filters["region"])]
 
-    # Production site  ✅ fixed bracket bug here
+    # Production site
     if filters.get("production_site") and mapping.get("production_site"):
         result = result[contains(mapping["production_site"], filters["production_site"])]
 
     # --- Product filters (NCA / CA / Terbium aware) ---
-
     def _product_mask(series: pd.Series, product_query: str) -> pd.Series:
         s = series.astype(str)
         col = s.str.lower()
@@ -875,7 +924,15 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
             # Do NOT filter by status – keep everything
             pass
 
+    # ------------------------------------------
+    # Apply dynamic week window (time_window)
+    # ------------------------------------------
+    time_window = spec.get("time_window")
+    if time_window and time_window.get("mode"):
+        result = _apply_time_window(result, spec)
+
     return result
+
 
 # =========================
 # Metadata relevance config
@@ -1733,4 +1790,55 @@ def answer_question_from_df(
 
     return result
 
+
+# -------------------------
+# Dynamic week window logic
+# -------------------------
+def _apply_time_window(df: pd.DataFrame, filters: Dict[str, Any]) -> pd.DataFrame:
+    """
+    Applies dynamic week window filters based on the 'time_window' structure.
+    This handles:
+    - last N weeks
+    - anchored last N weeks
+    """
+    tw = filters.get("time_window") or {}
+    mode = tw.get("mode")
+    n_weeks = tw.get("n_weeks")
+    anchor = tw.get("anchor") or {}
+    anchor_year = anchor.get("year")
+    anchor_week = anchor.get("week")
+
+    # If no dynamic mode: nothing to do
+    if not mode or not n_weeks:
+        return df
+
+    df = df.copy()
+
+    # Determine the effective year to operate in
+    effective_year = filters.get("year")
+
+    if effective_year is None and anchor_year is not None:
+        effective_year = anchor_year
+
+    if effective_year is None:
+        effective_year = int(df["Year"].max())
+
+    df_year = df[df["Year"] == effective_year]
+
+    if df_year.empty:
+        return df.iloc[0:0]
+
+    # Determine anchor week
+    if mode == "anchored_last_n_weeks":
+        if anchor_week is None:
+            return df.iloc[0:0]
+        end_week = anchor_week
+    else:
+        end_week = int(df_year["Week"].max())
+
+    start_week = end_week - n_weeks + 1
+
+    df_filtered = df_year[(df_year["Week"] >= start_week) & (df_year["Week"] <= end_week)]
+
+    return df_filtered
 
