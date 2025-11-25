@@ -640,6 +640,31 @@ def _interpret_question_fallback(
     # naive cancellation detection
     if "cancel" in q_lower or "reject" in q_lower:
         spec["shipping_status_mode"] = "cancelled"
+# ----- Special rule: explicit compare with single week -----
+    if "compare" in q_lower and "week" in q_lower:
+        # Detect explicit week number
+        m = re.search(r"week\s+(\d{1,2})", q_lower)
+        if m:
+            week_val = int(m.group(1))
+            spec["filters"]["week"] = week_val
+
+        # Detect explicit year
+        y = re.search(r"(20[2-3][0-9])", q_lower)
+        if y:
+            spec["filters"]["year"] = int(y.group(1))
+
+        # Decide grouping:
+        # If both X and Y are countries → group by country
+        if any(c in q_lower for c in ["germany", "france", "austria", "israel", "brazil"]):
+            spec["group_by"] = ["country"]
+
+        # If both X and Y are distributors → group by distributor
+        if "dsd" in q_lower or "pi medical" in q_lower:
+            spec["group_by"] = ["distributor"]
+
+        # If both X and Y are customers → group by customer
+        if "hospital" in q_lower or "clinic" in q_lower or "essen" in q_lower:
+            spec["group_by"] = ["customer"]
 
     return spec
 
