@@ -2198,6 +2198,230 @@ def answer_question_from_df(
             )
             core_answer = header + preview_md
 
+
+    # ------------------------------------------------------------------
+    # GROWTH RATE
+    # ------------------------------------------------------------------
+    if aggregation == "growth_rate":
+        if full_df is None or not isinstance(full_df, pd.DataFrame):
+            return None, float("nan")
+
+        compare = spec.get("compare") or {}
+        period_a = compare.get("period_a") or {}
+        period_b = compare.get("period_b") or {}
+
+        time_keys = ["year", "week", "month", "quarter", "half_year"]
+
+        def _df_for_period(period_filters: Dict[str, Any]) -> pd.DataFrame:
+            temp_spec = copy.deepcopy(spec)
+            f = temp_spec.get("filters", {}) or {}
+            for key in time_keys:
+                f[key] = period_filters.get(key)
+            temp_spec["filters"] = f
+            return _apply_filters(full_df, temp_spec)
+
+        # ---- Helper: detect whether the two periods are actually distinct ----
+        def _period_has_any_time(p: Dict[str, Any]) -> bool:
+            return any(p.get(k) is not None for k in time_keys)
+
+        def _periods_distinct(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+            # Consider periods "distinct" only if at least one time key differs.
+            return any(
+                (a.get(k) is not None or b.get(k) is not None)
+                and (a.get(k) != b.get(k))
+                for k in time_keys
+            )
+
+        has_explicit_periods = _period_has_any_time(period_a) or _period_has_any_time(period_b)
+        periods_distinct = _periods_distinct(period_a, period_b)
+
+        # ==================================================================
+        # MODE 1: Automatic time-series growth per entity & time bucket
+        # ==================================================================
+        # If the periods are not really distinct, but we *do* have grouping
+        # with a time dimension, treat this as "growth over time":
+        #   e.g. distributor + year, country + quarter, customer + week, etc.
+        # ==================================================================
+        if group_cols and (not has_explicit_periods or not periods_distinct):
+            # Separate entity vs time columns from group_cols
+            # mapping[...] is defined earlier in _run_aggregation
+            time_mapping = {
+                "year": mapping.get("year"),
+                "half_year": mapping.get("half_year"),
+                "quarter": mapping.get("quarter"),
+                "month": mapping.get("month"),
+                "week": mapping.get("week"),
+            }
+
+            time_group_cols_set = {
+                col
+                for _, col in time_mapping.items()
+                if col is not None and col in group_cols
+            }
+
+            entity_cols: List[str] = []
+            time_cols_in_group: List[str] = []
+            for col in group_cols:
+                if col in time_group_cols_set:
+                    time_cols_in_group.append(col)
+                else:
+                    entity_cols.append(col)
+
+            # If we don't actually have any time column in group_by,
+            # fall back to a simple grouped sum.
+            if not time_cols_in_group:
+                total_mci = float(df_filtered[total_col].sum())
+                grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
+                grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
+                spec["_growth_debug"] = {
+                    "mode": "auto_time_series_no_time_dim",
+                    "group_cols": group_cols,
+                }
+                return grouped_df, total_mci
+
+            # 1) Aggregate once by entity + time
+            df_grouped = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
+            df_grouped["PeriodB_mCi"] = df_grouped[total_col].astype(float)
+
+            # 2) Sort by entity(s) + time columns
+            sort_cols = entity_cols + time_cols_in_group
+            df_grouped = df_grouped.sort_values(sort_cols)
+
+            # 3) Previous bucket per entity becomes PeriodA
+            if entity_cols:
+                df_grouped["PeriodA_mCi"] = df_grouped.groupby(entity_cols)["PeriodB_mCi"].shift(1)
+            else:
+                df_grouped["PeriodA_mCi"] = df_grouped["PeriodB_mCi"].shift(1)
+
+            df_grouped["PeriodA_mCi"] = df_grouped["PeriodA_mCi"].fillna(0.0)
+
+            # 4) Compute AbsChange, GrowthRate, Status
+            def _compute_growth_row(row: pd.Series) -> float:
+                a = float(row["PeriodA_mCi"])
+                b = float(row["PeriodB_mCi"])
+                if a == 0 and b == 0:
+                    return 0.0
+                if a == 0 and b > 0:
+                    # mathematically "infinite" growth – mark as NaN in % terms
+                    return float("nan")
+                return (b - a) / a
+
+            def _compute_status_row(row: pd.Series) -> str:
+                a = float(row["PeriodA_mCi"])
+                b = float(row["PeriodB_mCi"])
+                if a == 0 and b == 0:
+                    return "no activity"
+                if a == 0 and b > 0:
+                    return "new"
+                if a > 0 and b == 0:
+                    return "stopped"
+                if b > a:
+                    return "increase"
+                if b < a:
+                    return "decrease"
+                return "no change"
+
+            df_grouped["AbsChange_mCi"] = df_grouped["PeriodB_mCi"] - df_grouped["PeriodA_mCi"]
+            df_grouped["GrowthRate"] = df_grouped.apply(_compute_growth_row, axis=1)
+            df_grouped["Status"] = df_grouped.apply(_compute_status_row, axis=1)
+
+            total_a = float(df_grouped["PeriodA_mCi"].sum())
+            total_b = float(df_grouped["PeriodB_mCi"].sum())
+            spec["_growth_debug"] = {
+                "mode": "auto_time_series",
+                "period_a_sum": total_a,
+                "period_b_sum": total_b,
+            }
+
+            overall_growth = float("nan") if total_a == 0 else (total_b - total_a) / total_a
+            return df_grouped, overall_growth
+
+        # ==================================================================
+        # MODE 2: Explicit period A vs period B (existing behaviour)
+        # ==================================================================
+
+        # --- No grouping: single global growth number
+        if not group_cols:
+            def _sum_for_period(period_filters: Dict[str, Any]) -> float:
+                df_p = _df_for_period(period_filters)
+                if df_p is None or df_p.empty or total_col not in df_p.columns:
+                    return 0.0
+                return float(df_p[total_col].sum())
+
+            sum_a = _sum_for_period(period_a)
+            sum_b = _sum_for_period(period_b)
+
+            spec["_growth_debug"] = {"period_a_sum": sum_a, "period_b_sum": sum_b}
+
+            if sum_a == 0:
+                return None, float("nan")
+
+            growth = (sum_b - sum_a) / sum_a
+            return None, float(growth)
+
+        # --- Grouped growth by the chosen dimensions (explicit A vs B)
+        df_a = _df_for_period(period_a)
+        df_b = _df_for_period(period_b)
+
+        if df_a is not None and not df_a.empty and total_col in df_a.columns:
+            grp_a = df_a.groupby(group_cols, as_index=False)[total_col].sum()
+            grp_a = grp_a.rename(columns={total_col: "PeriodA_mCi"})
+        else:
+            grp_a = pd.DataFrame(columns=group_cols + ["PeriodA_mCi"])
+
+        if df_b is not None and not df_b.empty and total_col in df_b.columns:
+            grp_b = df_b.groupby(group_cols, as_index=False)[total_col].sum()
+            grp_b = grp_b.rename(columns={total_col: "PeriodB_mCi"})
+        else:
+            grp_b = pd.DataFrame(columns=group_cols + ["PeriodB_mCi"])
+
+        merged = pd.merge(grp_a, grp_b, on=group_cols, how="outer")
+        if merged.empty:
+            spec["_growth_debug"] = {"period_a_sum": 0.0, "period_b_sum": 0.0}
+            return merged, float("nan")
+
+        merged["PeriodA_mCi"] = merged["PeriodA_mCi"].fillna(0.0)
+        merged["PeriodB_mCi"] = merged["PeriodB_mCi"].fillna(0.0)
+
+        def _compute_growth_row(row: pd.Series) -> float:
+            a = float(row["PeriodA_mCi"])
+            b = float(row["PeriodB_mCi"])
+            if a == 0 and b == 0:
+                return 0.0
+            if a == 0 and b > 0:
+                return float("nan")
+            return (b - a) / a
+
+        def _compute_status_row(row: pd.Series) -> str:
+            a = float(row["PeriodA_mCi"])
+            b = float(row["PeriodB_mCi"])
+            if a == 0 and b == 0:
+                return "no activity"
+            if a == 0 and b > 0:
+                return "new"
+            if a > 0 and b == 0:
+                return "stopped"
+            if b > a:
+                return "increase"
+            if b < a:
+                return "decrease"
+            return "no change"
+
+        merged["AbsChange_mCi"] = merged["PeriodB_mCi"] - merged["PeriodA_mCi"]
+        merged["GrowthRate"] = merged.apply(_compute_growth_row, axis=1)
+        merged["Status"] = merged.apply(_compute_status_row, axis=1)
+
+        total_a = float(merged["PeriodA_mCi"].sum())
+        total_b = float(merged["PeriodB_mCi"].sum())
+        spec["_growth_debug"] = {"period_a_sum": total_a, "period_b_sum": total_b}
+
+        if total_a == 0:
+            overall_growth = float("nan")
+        else:
+            overall_growth = (total_b - total_a) / total_a
+
+        return merged, overall_growth
+
 # -------------------------
 # Dynamic week window logic
 # -------------------------
