@@ -1618,49 +1618,7 @@ def _run_aggregation(
 
         share = numerator / denominator
         return None, float(share)
-# Add this section right after the SHARE OF TOTAL handler
-# (around line 1230 in answer_question_from_df)
 
-# GROWTH RATE
-elif aggregation == "growth_rate":
-    growth_debug = spec.get("_growth_debug", {}) or {}
-    mode = growth_debug.get("mode")
-    
-    if group_df is None:
-        # Single global growth rate
-        growth_pct = numeric_value * 100.0
-        sum_a = growth_debug.get("period_a_sum", 0)
-        sum_b = growth_debug.get("period_b_sum", 0)
-        
-        core_answer = (
-            f"Based on {status_text} for {filter_text}, "
-            f"the growth rate is **{growth_pct:.1f}%**. "
-            f"Period A total: **{sum_a:,.0f} mCi**, "
-            f"Period B total: **{sum_b:,.0f} mCi**."
-        )
-    else:
-        # Grouped growth rate table
-        preview_md = group_df.to_markdown(index=False)
-        
-        if mode == "auto_time_series":
-            # Automatic time-series growth (e.g., "distributors growth over years")
-            header = (
-                f"Here is the **growth rate breakdown** for {status_text} for {filter_text}. "
-                f"Growth is calculated comparing each period to the previous period.\n\n"
-            )
-        else:
-            # Explicit period A vs B comparison
-            sum_a = growth_debug.get("period_a_sum", 0)
-            sum_b = growth_debug.get("period_b_sum", 0)
-            overall_growth_pct = numeric_value * 100.0 if not pd.isna(numeric_value) else 0
-            
-            header = (
-                f"Here is the **growth rate breakdown** for {status_text} for {filter_text}. "
-                f"Overall growth: **{overall_growth_pct:.1f}%** "
-                f"(from **{sum_a:,.0f} mCi** to **{sum_b:,.0f} mCi**).\n\n"
-            )
-        
-        core_answer = header + preview_md
     # ------------------------------------------------------------------
     # GROWTH RATE
     # ------------------------------------------------------------------
@@ -2028,48 +1986,6 @@ def answer_question_from_df(
     spec = _ensure_all_statuses_when_grouped(spec)
     spec = _inject_customer_from_question(consolidated_df, spec)
     spec = _disambiguate_customer_vs_distributor(consolidated_df, spec)
-    spec = _inject_customer_from_question(consolidated_df, spec)
-    spec = _disambiguate_customer_vs_distributor(consolidated_df, spec)
-
-    # --- Heuristic: downgrade vague "growth … over X" questions to totals with pivot ---
-    q_lower = (question or "").lower()
-    aggregation = spec.get("aggregation")
-
-    if aggregation == "growth_rate":
-        compare = spec.get("compare") or {}
-        period_a = compare.get("period_a") or {}
-        period_b = compare.get("period_b") or {}
-
-        time_keys = ["year", "week", "month", "quarter", "half_year"]
-
-        has_a = any(period_a.get(k) not in (None, "", []) for k in time_keys)
-        has_b = any(period_b.get(k) not in (None, "", []) for k in time_keys)
-
-        # If the model did NOT pick two explicit periods, treat as a time-series total
-        if not (has_a and has_b) and "growth" in q_lower:
-            gb = spec.get("group_by") or []
-
-            if any(w in q_lower for w in ["year", "years"]):
-                if "year" not in gb:
-                    gb.append("year")
-            elif "quarter" in q_lower or "quarters" in q_lower:
-                if "quarter" not in gb:
-                    gb.append("quarter")
-            elif "month" in q_lower or "months" in q_lower:
-                if "month" not in gb:
-                    gb.append("month")
-            elif "week" in q_lower or "weeks" in q_lower:
-                if "week" not in gb:
-                    gb.append("week")
-            elif "half" in q_lower:
-                if "half_year" not in gb:
-                    gb.append("half_year")
-
-            spec["group_by"] = gb
-            spec["aggregation"] = "sum_mci"
-
-    df_filtered = _apply_filters(consolidated_df, spec)
-    group_df, numeric_value = _run_aggregation(df_filtered, spec, consolidated_df)
 
     df_filtered = _apply_filters(consolidated_df, spec)
     group_df, numeric_value = _run_aggregation(df_filtered, spec, consolidated_df)
