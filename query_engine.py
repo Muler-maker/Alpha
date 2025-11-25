@@ -599,24 +599,62 @@ ALWAYS:
         compare["entities"] = ["DSD", "PI Medical"]
         compare["entity_type"] = "distributor"
         spec["compare"] = compare
-        spec["group_by"] = ["distributor"]
 
-    # --- Product compare: CA vs NCA ---
+        # Start from whatever the LLM already decided
+        gb = spec.get("group_by") or []
+
+        # If the user asked "per year / by year / yearly / each year / in years"
+        # make sure 'year' is included as a grouping dimension
+        if any(t in q_lower for t in ["per year", "by year", "yearly", "each year", "in years"]):
+            if "year" not in gb:
+                gb.append("year")
+
+        # Always have distributor as the first dimension in comparison
+        if "distributor" not in gb:
+            gb.insert(0, "distributor")
+
+        spec["group_by"] = gb
+
     # Be careful: "ca" is a substring of "nca", so only treat CA as present
     # when it appears as a separate token.
     has_nca = "nca" in q_lower
     ca_token_patterns = [" ca ", " ca,", " ca.", " ca?", " ca!"]
     has_ca_token = any(p in q_lower for p in ca_token_patterns)
 
-    if "compare" in q_lower and has_nca and has_ca_token:
+    # --- Product compare: CA vs NCA ---
+    if "compare" in q_lower and "ca" in q_lower and "nca" in q_lower:
         spec["aggregation"] = "compare"
         compare = spec.get("compare") or {}
         compare["entities"] = ["CA", "NCA"]
         compare["entity_type"] = "product_sold"
         spec["compare"] = compare
-        spec["group_by"] = ["product_sold"]
 
+        gb = spec.get("group_by") or []
 
+        # If the user said "per year / by year / yearly / each year / in years"
+        if any(t in q_lower for t in ["per year", "by year", "yearly", "each year", "in years"]):
+            if "year" not in gb:
+                gb.append("year")
+
+        # Always put product_sold first
+        if "product_sold" not in gb:
+            gb.insert(0, "product_sold")
+
+        spec["group_by"] = gb
+
+    # --- Product compare: CA vs NCA ---
+    if "compare" in q_lower and "ca" in q_lower and "nca" in q_lower:
+        ...
+        spec["group_by"] = gb
+
+    # 🔒 Global safety net: if the user clearly asked for "per year"
+    # but the LLM forgot to include 'year' in group_by, add it.
+    if any(t in q_lower for t in ["per year", "by year", "yearly", "each year", "in years"]):
+        gb = spec.get("group_by") or []
+        if "year" not in gb:
+            gb.append("year")
+        spec["group_by"] = gb
+        
     return spec
 
 def _interpret_question_fallback(
@@ -1909,6 +1947,37 @@ def answer_question_from_df(
 
     df_filtered = _apply_filters(consolidated_df, spec)
     group_df, numeric_value = _run_aggregation(df_filtered, spec, consolidated_df)
+    df_filtered = _apply_filters(consolidated_df, spec)
+    group_df, numeric_value = _run_aggregation(df_filtered, spec, consolidated_df)
+
+    # 🔁 Pivot-style reshaping for time dimensions (Year / Week / Quarter / Half year / Month)
+    group_df = _reshape_for_display(group_df, spec)
+
+    # --- Format numeric columns (no decimals / scientific notation) ---
+    if group_df is not None and not group_df.empty:
+        for col in group_df.columns:
+            col_lower = str(col).lower()
+            is_year_col = False
+            try:
+                is_year_col = str(int(col)) == str(col)
+            except Exception:
+                pass
+
+            if (
+                "mci" in col_lower
+                or "growthrate" in col_lower
+                or "abschange" in col_lower
+                or is_year_col
+            ):
+                try:
+                    group_df[col] = (
+                        pd.to_numeric(group_df[col], errors="coerce")
+                        .fillna(0)
+                        .round(0)
+                        .astype(int)
+                    )
+                except Exception:
+                    pass
 
     # Pivot so that years appear as columns whenever Year + Total_mCi exist
     group_by = spec.get("group_by") or []
