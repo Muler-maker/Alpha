@@ -584,6 +584,13 @@ ALWAYS:
     # 🔧 Extra post-processing for patterns that the LLM often misses
 
     q_lower = (question or "").lower()
+        # If the question includes "per year", "by year" etc., make sure we include "year" in group_by
+    if any(t in q_lower for t in ["per year", "by year", "yearly", "each year"]):
+        gb = spec.get("group_by") or []
+        if "year" not in gb:
+            gb = gb + ["year"]
+        spec["group_by"] = gb
+
 
     # --- Distributor compare: DSD vs PI Medical ---
     if "compare" in q_lower and "dsd" in q_lower and "pi medical" in q_lower:
@@ -2031,19 +2038,36 @@ def answer_question_from_df(
 
         if group_df is None:
             growth_pct = numeric_value * 100.0 if not pd.isna(numeric_value) else None
+
+            # Build a 2-row comparison table
+            total_a = a_sum if a_sum is not None else 0.0
+            total_b = b_sum if b_sum is not None else 0.0
+
+            growth_table = pd.DataFrame(
+                [
+                    {"Period": pa_label, "Total_mCi": int(round(total_a))},
+                    {"Period": pb_label, "Total_mCi": int(round(total_b))},
+                ]
+            )
+
+            preview_md = growth_table.to_markdown(index=False)
+
             if a_sum is not None and b_sum is not None and growth_pct is not None:
                 core_answer = (
                     f"For {status_text} for {filter_text}, the total ordered amount was "
                     f"**{a_sum:,.0f} mCi** in {pa_label} and **{b_sum:,.0f} mCi** in {pb_label}. "
                     f"This corresponds to a **growth rate of {growth_pct:.1f}%** "
-                    f"from {pa_label} to {pb_label}."
+                    f"from {pa_label} to {pb_label}.\n\n"
+                    f"Here is the breakdown:\n\n{preview_md}"
                 )
             else:
                 core_answer = (
                     f"For {status_text} for {filter_text}, the estimated growth rate from "
                     f"{pa_label} to {pb_label} could not be computed because the first period "
-                    f"has no measurable volume."
+                    f"has no measurable volume.\n\n"
+                    f"Here is the breakdown:\n\n{preview_md}"
                 )
+
         else:
             # Group table + overall growth
             growth_pct = numeric_value * 100.0 if not pd.isna(numeric_value) else None
