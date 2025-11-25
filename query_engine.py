@@ -2122,7 +2122,7 @@ def answer_question_from_df(
     else:
         status_text = f"orders with '{ship_mode}' statuses"
 
-    row_count = len(df_filtered)
+    row_count = len(df_filtered) if df_filtered is not None else 0
 
     # If we have NO table and the numeric value is NaN, it's a real error.
     # If we DO have a table (group_df), it's OK for numeric_value to be NaN.
@@ -2236,7 +2236,33 @@ def answer_question_from_df(
                 + preview_md
             )
 
-    return core_answer
+    # 9) Optionally add metadata snippet (below the main answer)
+    meta_block = None
+    try:
+        if _should_include_metadata(spec):
+            meta_block = _build_metadata_snippet(df_filtered, spec)
+    except NameError:
+        meta_block = None
+
+    # 10) Optionally add chart block (for bar / line / pie visualizations)
+    chart_block = None
+    try:
+        if group_df is not None and not group_df.empty:
+            chart_block = _build_chart_block(group_df, spec, aggregation)
+    except NameError:
+        chart_block = None
+
+    final_answer = core_answer
+
+    # Metadata comes at the bottom of the textual answer
+    if meta_block:
+        final_answer += meta_block
+
+    # Chart block is appended so the frontend can detect ```chart ... ```
+    if chart_block:
+        final_answer += "\n\n" + chart_block
+
+    return final_answer
 
 # -------------------------
 # Dynamic week window logic
