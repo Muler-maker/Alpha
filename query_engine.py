@@ -1974,12 +1974,14 @@ def answer_question_from_df(
     if consolidated_df is None or consolidated_df.empty:
         return "The consolidated data is empty. Please load data first."
 
+    # 1) Build & normalize the spec
     spec = _interpret_question_with_llm(question, history=history)
     spec["_question_text"] = question
 
     try:
         spec = _normalize_product_filters(spec, question)
     except NameError:
+        # If helper not present, just skip
         pass
 
     spec = _force_cancellation_status_from_text(question, spec)
@@ -1987,78 +1989,14 @@ def answer_question_from_df(
     spec = _inject_customer_from_question(consolidated_df, spec)
     spec = _disambiguate_customer_vs_distributor(consolidated_df, spec)
 
+    # 2) Apply filters & run aggregation
     df_filtered = _apply_filters(consolidated_df, spec)
     group_df, numeric_value = _run_aggregation(df_filtered, spec, consolidated_df)
 
-    # 🔁 Pivot-style reshaping for time dimensions (Year / Week / Quarter / Half year / Month)
+    # 3) Pivot-style reshaping for time dimensions (Year / Week / Quarter / Half year / Month)
     group_df = _reshape_for_display(group_df, spec)
 
-    # --- Format numeric columns (no decimals / scientific notation) ---
-    if group_df is not None and not group_df.empty:
-        for col in group_df.columns:
-            col_lower = str(col).lower()
-            is_year_col = False
-            try:
-                is_year_col = str(int(col)) == str(col)
-            except Exception:
-                pass
-
-            if (
-                "mci" in col_lower
-                or "growthrate" in col_lower
-                or "abschange" in col_lower
-                or is_year_col
-            ):
-                try:
-                    group_df[col] = (
-                        pd.to_numeric(group_df[col], errors="coerce")
-                        .fillna(0)
-                        .round(0)
-                        .astype(int)
-                    )
-                except Exception:
-                    pass
-
-    # Pivot so that years appear as columns whenever Year + Total_mCi exist
-    group_by = spec.get("group_by") or []
-    if (
-        group_df is not None
-        and not group_df.empty
-        and "Year" in group_df.columns
-        and "Total_mCi" in group_df.columns
-    ):
-        non_year_cols = [c for c in group_df.columns if c not in ("Year", "Total_mCi")]
-
-        if non_year_cols:
-            # e.g. Region x Year, Distributor x Year, Product x Year
-            try:
-                pivot_df = group_df.pivot(
-                    index=non_year_cols,
-                    columns="Year",
-                    values="Total_mCi",
-                ).reset_index()
-
-                pivot_df.columns = [str(c) for c in pivot_df.columns]
-                group_df = pivot_df
-            except Exception:
-                pass
-        else:
-            # Only Year + Total_mCi → single row with years as columns
-            years = sorted(group_df["Year"].unique())
-            wide = pd.DataFrame([{
-                str(y): float(group_df.loc[group_df["Year"] == y, "Total_mCi"].sum())
-                for y in years
-            }])
-            group_df = wide
-
-    # --- Ensure all mCi values and year columns are whole numbers, no scientific notation ---
-
-    filters = spec.get("filters", {}) or {}
-    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
-    # 🔁 Pivot-style reshaping for time dimensions (Year / Week / Quarter / Half year / Month)
-    group_df = _reshape_for_display(group_df, spec)
-
-    # --- Format numeric columns (no decimals / scientific notation) ---
+    # 4) Format numeric columns (no decimals / scientific notation)
     if group_df is not None and not group_df.empty:
         for col in group_df.columns:
             col_lower = str(col).lower()
@@ -2084,6 +2022,69 @@ def answer_question_from_df(
                     )
                 except Exception:
                     pass
+
+    # 5) If we have Year + Total_mCi, pivot so years are columns
+    group_by = spec.get("group_by") or []
+    if (
+        group_df is not None
+        and not group_df.empty
+        and "Year" in group_df.columns
+        and "Total_mCi" in group_df.columns
+    ):
+        non_year_cols = [c for c in group_df.columns if c not in ("Year", "Total_mCi")]
+
+        if non_year_cols:
+            # e.g. Region x Year, Distributor x Year, Product x Year
+            try:
+                pivot_df = group_df.pivot(
+                    index=non_year_cols,
+                    columns="Year",
+                    values="Total_mCi",
+                ).reset_index()
+                pivot_df.columns = [str(c) for c in pivot_df.columns]
+                group_df = pivot_df
+            except Exception:
+                pass
+        else:
+            # Only Year + Total_mCi → single row with years as columns
+            years = sorted(group_df["Year"].unique())
+            wide = pd.DataFrame([{
+                str(y): float(
+                    group_df.loc[group_df["Year"] == y, "Total_mCi"].sum()
+                )
+                for y in years
+            }])
+            group_df = wide
+
+    # 6) One more pass of numeric formatting after pivot reshaping
+    if group_df is not None and not group_df.empty:
+        for col in group_df.columns:
+            col_lower = str(col).lower()
+            is_year_col = False
+            try:
+                is_year_col = str(int(col)) == str(col)
+            except Exception:
+                pass
+
+            if (
+                "mci" in col_lower
+                or "growthrate" in col_lower
+                or "abschange" in col_lower
+                or is_year_col
+            ):
+                try:
+                    group_df[col] = (
+                        pd.to_numeric(group_df[col], errors="coerce")
+                        .fillna(0)
+                        .round(0)
+                        .astype(int)
+                    )
+                except Exception:
+                    pass
+
+    # 7) Build human-readable filter description
+    filters = spec.get("filters", {}) or {}
+    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
 
     parts = []
     if filters.get("customer"):
@@ -2125,16 +2126,18 @@ def answer_question_from_df(
 
     # If we have NO table and the numeric value is NaN, it's a real error.
     # If we DO have a table (group_df), it's OK for numeric_value to be NaN.
-    if group_df is None and pd.isna(numeric_value):
+    if group_df is None and (numeric_value is None or pd.isna(numeric_value)):
         return (
             "I couldn't locate the 'Total amount ordered (mCi)' column or compute the requested metric, "
             "so I can't calculate a numeric answer."
         )
 
+    # 8) Build the core textual answer by aggregation type
+    core_answer = ""
+
     # SUM (and basic comparison tables)
     if aggregation in ("sum_mci", "compare"):
         if group_df is None:
-
             core_answer = (
                 f"Based on {status_text} for {filter_text}, the total ordered amount is "
                 f"**{numeric_value:,.0f} mCi**, calculated from **{row_count}** rows."
@@ -2196,229 +2199,44 @@ def answer_question_from_df(
             )
             core_answer = header + preview_md
 
-
-    # ------------------------------------------------------------------
-    # GROWTH RATE
-    # ------------------------------------------------------------------
-    if aggregation == "growth_rate":
-        if full_df is None or not isinstance(full_df, pd.DataFrame):
-            return None, float("nan")
-
-        compare = spec.get("compare") or {}
-        period_a = compare.get("period_a") or {}
-        period_b = compare.get("period_b") or {}
-
-        time_keys = ["year", "week", "month", "quarter", "half_year"]
-
-        def _df_for_period(period_filters: Dict[str, Any]) -> pd.DataFrame:
-            temp_spec = copy.deepcopy(spec)
-            f = temp_spec.get("filters", {}) or {}
-            for key in time_keys:
-                f[key] = period_filters.get(key)
-            temp_spec["filters"] = f
-            return _apply_filters(full_df, temp_spec)
-
-        # ---- Helper: detect whether the two periods are actually distinct ----
-        def _period_has_any_time(p: Dict[str, Any]) -> bool:
-            return any(p.get(k) is not None for k in time_keys)
-
-        def _periods_distinct(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
-            # Consider periods "distinct" only if at least one time key differs.
-            return any(
-                (a.get(k) is not None or b.get(k) is not None)
-                and (a.get(k) != b.get(k))
-                for k in time_keys
+    # GROWTH RATE (formatting only – all logic is inside _run_aggregation)
+    elif aggregation == "growth_rate":
+        if group_df is None:
+            # Single global growth number
+            if numeric_value is None or pd.isna(numeric_value):
+                core_answer = (
+                    f"I couldn't compute a growth rate for {status_text} for {filter_text} "
+                    f"because there was no activity in the base period."
+                )
+            else:
+                pct = numeric_value * 100.0
+                core_answer = (
+                    f"Based on {status_text} for {filter_text}, the growth rate between the two periods "
+                    f"is approximately **{pct:.1f}%**."
+                )
+        else:
+            # Grouped growth table: expect PeriodA_mCi, PeriodB_mCi, GrowthRate, Status
+            preview_md = group_df.to_markdown(index=False)
+            core_answer = (
+                f"Here is the **growth analysis per group** for {status_text} for {filter_text}.\n\n"
+                + preview_md
             )
 
-        has_explicit_periods = _period_has_any_time(period_a) or _period_has_any_time(period_b)
-        periods_distinct = _periods_distinct(period_a, period_b)
-
-        # ==================================================================
-        # MODE 1: Automatic time-series growth per entity & time bucket
-        # ==================================================================
-        # If the periods are not really distinct, but we *do* have grouping
-        # with a time dimension, treat this as "growth over time":
-        #   e.g. distributor + year, country + quarter, customer + week, etc.
-        # ==================================================================
-        if group_cols and (not has_explicit_periods or not periods_distinct):
-            # Separate entity vs time columns from group_cols
-            # mapping[...] is defined earlier in _run_aggregation
-            time_mapping = {
-                "year": mapping.get("year"),
-                "half_year": mapping.get("half_year"),
-                "quarter": mapping.get("quarter"),
-                "month": mapping.get("month"),
-                "week": mapping.get("week"),
-            }
-
-            time_group_cols_set = {
-                col
-                for _, col in time_mapping.items()
-                if col is not None and col in group_cols
-            }
-
-            entity_cols: List[str] = []
-            time_cols_in_group: List[str] = []
-            for col in group_cols:
-                if col in time_group_cols_set:
-                    time_cols_in_group.append(col)
-                else:
-                    entity_cols.append(col)
-
-            # If we don't actually have any time column in group_by,
-            # fall back to a simple grouped sum.
-            if not time_cols_in_group:
-                total_mci = float(df_filtered[total_col].sum())
-                grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
-                grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
-                spec["_growth_debug"] = {
-                    "mode": "auto_time_series_no_time_dim",
-                    "group_cols": group_cols,
-                }
-                return grouped_df, total_mci
-
-            # 1) Aggregate once by entity + time
-            df_grouped = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
-            df_grouped["PeriodB_mCi"] = df_grouped[total_col].astype(float)
-
-            # 2) Sort by entity(s) + time columns
-            sort_cols = entity_cols + time_cols_in_group
-            df_grouped = df_grouped.sort_values(sort_cols)
-
-            # 3) Previous bucket per entity becomes PeriodA
-            if entity_cols:
-                df_grouped["PeriodA_mCi"] = df_grouped.groupby(entity_cols)["PeriodB_mCi"].shift(1)
-            else:
-                df_grouped["PeriodA_mCi"] = df_grouped["PeriodB_mCi"].shift(1)
-
-            df_grouped["PeriodA_mCi"] = df_grouped["PeriodA_mCi"].fillna(0.0)
-
-            # 4) Compute AbsChange, GrowthRate, Status
-            def _compute_growth_row(row: pd.Series) -> float:
-                a = float(row["PeriodA_mCi"])
-                b = float(row["PeriodB_mCi"])
-                if a == 0 and b == 0:
-                    return 0.0
-                if a == 0 and b > 0:
-                    # mathematically "infinite" growth – mark as NaN in % terms
-                    return float("nan")
-                return (b - a) / a
-
-            def _compute_status_row(row: pd.Series) -> str:
-                a = float(row["PeriodA_mCi"])
-                b = float(row["PeriodB_mCi"])
-                if a == 0 and b == 0:
-                    return "no activity"
-                if a == 0 and b > 0:
-                    return "new"
-                if a > 0 and b == 0:
-                    return "stopped"
-                if b > a:
-                    return "increase"
-                if b < a:
-                    return "decrease"
-                return "no change"
-
-            df_grouped["AbsChange_mCi"] = df_grouped["PeriodB_mCi"] - df_grouped["PeriodA_mCi"]
-            df_grouped["GrowthRate"] = df_grouped.apply(_compute_growth_row, axis=1)
-            df_grouped["Status"] = df_grouped.apply(_compute_status_row, axis=1)
-
-            total_a = float(df_grouped["PeriodA_mCi"].sum())
-            total_b = float(df_grouped["PeriodB_mCi"].sum())
-            spec["_growth_debug"] = {
-                "mode": "auto_time_series",
-                "period_a_sum": total_a,
-                "period_b_sum": total_b,
-            }
-
-            overall_growth = float("nan") if total_a == 0 else (total_b - total_a) / total_a
-            return df_grouped, overall_growth
-
-        # ==================================================================
-        # MODE 2: Explicit period A vs period B (existing behaviour)
-        # ==================================================================
-
-        # --- No grouping: single global growth number
-        if not group_cols:
-            def _sum_for_period(period_filters: Dict[str, Any]) -> float:
-                df_p = _df_for_period(period_filters)
-                if df_p is None or df_p.empty or total_col not in df_p.columns:
-                    return 0.0
-                return float(df_p[total_col].sum())
-
-            sum_a = _sum_for_period(period_a)
-            sum_b = _sum_for_period(period_b)
-
-            spec["_growth_debug"] = {"period_a_sum": sum_a, "period_b_sum": sum_b}
-
-            if sum_a == 0:
-                return None, float("nan")
-
-            growth = (sum_b - sum_a) / sum_a
-            return None, float(growth)
-
-        # --- Grouped growth by the chosen dimensions (explicit A vs B)
-        df_a = _df_for_period(period_a)
-        df_b = _df_for_period(period_b)
-
-        if df_a is not None and not df_a.empty and total_col in df_a.columns:
-            grp_a = df_a.groupby(group_cols, as_index=False)[total_col].sum()
-            grp_a = grp_a.rename(columns={total_col: "PeriodA_mCi"})
+    # Fallback
+    else:
+        if group_df is None:
+            core_answer = (
+                f"Based on {status_text} for {filter_text}, the value of the requested metric is "
+                f"**{numeric_value:,.0f}** across **{row_count}** rows."
+            )
         else:
-            grp_a = pd.DataFrame(columns=group_cols + ["PeriodA_mCi"])
+            preview_md = group_df.to_markdown(index=False)
+            core_answer = (
+                f"Here is the breakdown of the requested metric for {status_text} for {filter_text}:\n\n"
+                + preview_md
+            )
 
-        if df_b is not None and not df_b.empty and total_col in df_b.columns:
-            grp_b = df_b.groupby(group_cols, as_index=False)[total_col].sum()
-            grp_b = grp_b.rename(columns={total_col: "PeriodB_mCi"})
-        else:
-            grp_b = pd.DataFrame(columns=group_cols + ["PeriodB_mCi"])
-
-        merged = pd.merge(grp_a, grp_b, on=group_cols, how="outer")
-        if merged.empty:
-            spec["_growth_debug"] = {"period_a_sum": 0.0, "period_b_sum": 0.0}
-            return merged, float("nan")
-
-        merged["PeriodA_mCi"] = merged["PeriodA_mCi"].fillna(0.0)
-        merged["PeriodB_mCi"] = merged["PeriodB_mCi"].fillna(0.0)
-
-        def _compute_growth_row(row: pd.Series) -> float:
-            a = float(row["PeriodA_mCi"])
-            b = float(row["PeriodB_mCi"])
-            if a == 0 and b == 0:
-                return 0.0
-            if a == 0 and b > 0:
-                return float("nan")
-            return (b - a) / a
-
-        def _compute_status_row(row: pd.Series) -> str:
-            a = float(row["PeriodA_mCi"])
-            b = float(row["PeriodB_mCi"])
-            if a == 0 and b == 0:
-                return "no activity"
-            if a == 0 and b > 0:
-                return "new"
-            if a > 0 and b == 0:
-                return "stopped"
-            if b > a:
-                return "increase"
-            if b < a:
-                return "decrease"
-            return "no change"
-
-        merged["AbsChange_mCi"] = merged["PeriodB_mCi"] - merged["PeriodA_mCi"]
-        merged["GrowthRate"] = merged.apply(_compute_growth_row, axis=1)
-        merged["Status"] = merged.apply(_compute_status_row, axis=1)
-
-        total_a = float(merged["PeriodA_mCi"].sum())
-        total_b = float(merged["PeriodB_mCi"].sum())
-        spec["_growth_debug"] = {"period_a_sum": total_a, "period_b_sum": total_b}
-
-        if total_a == 0:
-            overall_growth = float("nan")
-        else:
-            overall_growth = (total_b - total_a) / total_a
-
-        return merged, overall_growth
+    return core_answer
 
 # -------------------------
 # Dynamic week window logic
