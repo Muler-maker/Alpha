@@ -1453,32 +1453,48 @@ def _run_aggregation(
                 return None, float("nan")
 
             def _product_subset(df: pd.DataFrame, label: str) -> pd.DataFrame:
+                """
+                Build a clean subset for "CA" or "NCA" from the product_sold / product_catalogue column.
+                Uses simple substring checks (regex=False) to avoid NCA leaking into CA.
+                """
                 label = str(label).lower()
                 series = df[prod_col].astype(str).str.lower()
 
-                # NCA bucket (non-carrier-added Lutetium, excluding Terbium)
+                # 1) Define NCA-like and CA-like patterns (string, not regex)
+                #    We always treat anything NCA-like as NCA, and *never* as CA.
+                nca_like = (
+                    series.str.contains("n.c.a", regex=False)
+                    | series.str.contains(" nca", regex=False)
+                    | series.str.contains("non carrier", regex=False)
+                    | series.str.contains("non-carrier", regex=False)
+                )
+
+                ca_like_raw = (
+                    series.str.contains(" c.a", regex=False)
+                    | series.str.contains("(c.a", regex=False)
+                    | series.str.contains(" ca ", regex=False)
+                    | series.str.contains(" carrier added", regex=False)
+                )
+
+                # Terbium-like products are excluded from both buckets
+                terb_like = series.str.contains("terb", regex=False) | series.str.contains(
+                    "tb-161", regex=False
+                ) | series.str.contains("tb161", regex=False) | series.str.contains("161tb", regex=False)
+
+                # 2) NCA bucket (non-carrier-added lutetium, not terbium)
                 if label == "nca":
-                    nca_like = series.str.contains(
-                        "n.c.a|nca|non carrier|non-carrier", regex=True
-                    )
-                    terb_like = series.str.contains("terb|tb-161|tb161|161tb", regex=True)
-                    return df[nca_like & ~terb_like]
+                    mask = nca_like & ~terb_like
+                    return df[mask]
 
-                # CA bucket (carrier added Lutetium, excluding Terbium and all NCA-like strings)
+                # 3) CA bucket (carrier-added lutetium, not NCA-like, not terbium)
                 if label == "ca":
-                    # Anything that looks NCA-like (we'll explicitly exclude this)
-                    nca_like = series.str.contains("n.c.a|nca|non carrier|non-carrier", regex=True)
+                    # CA-like, but explicitly *not* NCA-like
+                    mask = ca_like_raw & ~nca_like & ~terb_like
+                    return df[mask]
 
-                    # CA-like patterns (C.A, carrier added). Use a slightly stricter regex,
-                    # then subtract anything that looks NCA-like.
-                    ca_like_raw = series.str.contains(r"c\.a|carrier added", regex=True)
-                    ca_like = ca_like_raw & ~nca_like
-
-                    terb_like = series.str.contains("terb|tb-161|tb161|161tb", regex=True)
-                    return df[ca_like & ~terb_like]
-
-                # Generic fallback: contains label (ignore NaNs)
+                # 4) Generic fallback: plain substring match on label (ignore NaNs)
                 return df[series.str.contains(label, na=False)]
+
 
             rows: List[pd.DataFrame] = []
             for ent in entities:
