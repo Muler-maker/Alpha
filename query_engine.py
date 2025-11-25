@@ -595,13 +595,20 @@ ALWAYS:
         spec["group_by"] = ["distributor"]
 
     # --- Product compare: CA vs NCA ---
-    if "compare" in q_lower and "ca" in q_lower and "nca" in q_lower:
+    # Be careful: "ca" is a substring of "nca", so only treat CA as present
+    # when it appears as a separate token.
+    has_nca = "nca" in q_lower
+    ca_token_patterns = [" ca ", " ca,", " ca.", " ca?", " ca!"]
+    has_ca_token = any(p in q_lower for p in ca_token_patterns)
+
+    if "compare" in q_lower and has_nca and has_ca_token:
         spec["aggregation"] = "compare"
         compare = spec.get("compare") or {}
         compare["entities"] = ["CA", "NCA"]
         compare["entity_type"] = "product_sold"
         spec["compare"] = compare
         spec["group_by"] = ["product_sold"]
+
 
     return spec
 
