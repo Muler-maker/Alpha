@@ -1335,22 +1335,22 @@ def _run_aggregation(
         # Entity-to-entity comparison (e.g., Austria vs Germany, DSD vs PI Medical)
         if entities and entity_type:
             entity_col = mapping.get(entity_type)
-            if not entity_col:
-                return None, float("nan")
             
-            # Special handling for product comparisons (use fuzzy matching)
-            if entity_type == "product_sold":
+            # Special handling for product comparisons (use existing product filter logic)
+            if entity_type == "product_sold" or entity_type == "product_catalogue":
                 all_rows = []
                 for entity_val in entities:
                     # Create a temporary spec for this product
                     temp_spec = copy.deepcopy(spec)
-                    temp_spec["filters"]["product_sold"] = entity_val
-                    temp_spec["aggregation"] = "sum_mci"  # temporarily change
+                    temp_filters = temp_spec.get("filters", {}) or {}
+                    temp_filters[entity_type] = entity_val
+                    temp_spec["filters"] = temp_filters
+                    temp_spec["aggregation"] = "sum_mci"
                     
                     # Apply filters (which includes smart product matching)
                     df_entity = _apply_filters(base_df, temp_spec)
                     
-                    if not df_entity.empty:
+                    if not df_entity.empty and total_col in df_entity.columns:
                         # Add a column to identify which entity this is
                         df_entity = df_entity.copy()
                         df_entity["_CompareEntity"] = entity_val
@@ -1361,23 +1361,35 @@ def _run_aggregation(
                 
                 df_compare = pd.concat(all_rows, ignore_index=True)
                 entity_col = "_CompareEntity"
+                
+            elif not entity_col or entity_col not in df_filtered.columns:
+                # Entity column doesn't exist, return empty
+                return None, float("nan")
+                
             else:
                 # For non-product entities, use fuzzy string matching
                 def matches_entity(val, entity_search):
                     """Check if val contains the entity_search term (case-insensitive)"""
                     if pd.isna(val):
                         return False
-                    return str(entity_search).lower() in str(val).lower()
+                    val_str = str(val).lower()
+                    search_str = str(entity_search).lower()
+                    return search_str in val_str
                 
                 # Build a mask for rows matching ANY of the entities
                 mask = pd.Series(False, index=df_filtered.index)
                 for entity_val in entities:
-                    mask |= df_filtered[entity_col].apply(lambda x: matches_entity(x, entity_val))
+                    entity_mask = df_filtered[entity_col].apply(lambda x: matches_entity(x, entity_val))
+                    mask |= entity_mask
                 
                 df_compare = df_filtered[mask].copy()
                 
                 if df_compare.empty:
                     return None, float("nan")
+            
+            # Ensure total_col exists in df_compare
+            if total_col not in df_compare.columns:
+                return None, float("nan")
             
             # Group by entity (and any other group_by dimensions)
             if group_cols and entity_col not in group_cols:
