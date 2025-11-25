@@ -1838,17 +1838,39 @@ def answer_question_from_df(
     df_filtered = _apply_filters(consolidated_df, spec)
     group_df, numeric_value = _run_aggregation(df_filtered, spec, consolidated_df)
 
-    # --- Format numeric columns for table output (no decimals, no scientific notation) ---
-    if group_df is not None and not group_df.empty:
-        for col in group_df.columns:
-            col_lower = str(col).lower()
-            # Any column that represents mCi should be whole numbers
-            if "mci" in col_lower:
-                try:
-                    group_df[col] = group_df[col].round(0).astype(int)
-                except Exception:
-                    # If something weird sneaks in, just skip that column
-                    pass
+    # Pivot so that years appear as columns whenever Year + Total_mCi exist
+    group_by = spec.get("group_by") or []
+    if (
+        group_df is not None
+        and not group_df.empty
+        and "Year" in group_df.columns
+        and "Total_mCi" in group_df.columns
+    ):
+        non_year_cols = [c for c in group_df.columns if c not in ("Year", "Total_mCi")]
+
+        if non_year_cols:
+            # e.g. Region x Year, Distributor x Year, Product x Year
+            try:
+                pivot_df = group_df.pivot(
+                    index=non_year_cols,
+                    columns="Year",
+                    values="Total_mCi",
+                ).reset_index()
+
+                pivot_df.columns = [str(c) for c in pivot_df.columns]
+                group_df = pivot_df
+            except Exception:
+                # If anything goes wrong, keep original layout
+                pass
+        else:
+            # Only Year and Total_mCi → single row with years as columns
+            years = sorted(group_df["Year"].unique())
+            wide = pd.DataFrame([{
+                str(y): float(group_df.loc[group_df["Year"] == y, "Total_mCi"].sum())
+                for y in years
+            }])
+            group_df = wide
+
 
     filters = spec.get("filters", {}) or {}
     aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
