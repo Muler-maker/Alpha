@@ -1989,8 +1989,6 @@ def answer_question_from_df(
 
     df_filtered = _apply_filters(consolidated_df, spec)
     group_df, numeric_value = _run_aggregation(df_filtered, spec, consolidated_df)
-    df_filtered = _apply_filters(consolidated_df, spec)
-    group_df, numeric_value = _run_aggregation(df_filtered, spec, consolidated_df)
 
     # 🔁 Pivot-style reshaping for time dimensions (Year / Week / Quarter / Half year / Month)
     group_df = _reshape_for_display(group_df, spec)
