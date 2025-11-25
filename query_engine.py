@@ -610,67 +610,78 @@ def _interpret_question_fallback(
         },
         "shipping_status_mode": "countable",
         "shipping_status_list": [],
-        "time_window": {
-            "mode": None,          # e.g. "last_n_weeks", "anchored_last_n_weeks"
-            "n_weeks": None,       # integer, e.g. 6 for "last 6 weeks"
-            "anchor": {
-                "year": None,      # optional anchor year, e.g. 2025
-                "week": None       # optional anchor week, e.g. 20
-            }
-        },
         "compare": {
-            "period_a": None,         # dict: {year, quarter, month, half_year, week, time_window}
-            "period_b": None,         # same structure as period_a
-            "entities": None,         # list of two entities ["Germany", "Austria"]
-            "entity_type": None,      # "country", "distributor", or "customer"
-            "mode": None,             # "time", "entity", or "table"
-            "table_group_by": None    # list for table comparisons, e.g. ["distributor", "year"]
+            "period_a": None,
+            "period_b": None,
+            "entities": None,
+            "entity_type": None,
+            "mode": None,
+            "table_group_by": None,
         },
-
+        "time_window": {
+            "mode": None,
+            "n_weeks": None,
+            "anchor": {"year": None, "week": None},
+        },
         "explanation": "Heuristic interpretation without LLM.",
     }
 
     q_lower = (question or "").lower()
 
+    # ----------------------------
     # naive year detection
+    # ----------------------------
     m = re.search(r"(20[2-3][0-9])", q_lower)
     if m:
         spec["filters"]["year"] = int(m.group(1))
 
+    # ----------------------------
     # naive cancellation detection
+    # ----------------------------
     if "cancel" in q_lower or "reject" in q_lower:
         spec["shipping_status_mode"] = "cancelled"
 
-    # ----- Special rule: explicit compare with single week -----
-    if "compare" in q_lower and "week" in q_lower:
-        # Extract explicit week
-        m = re.search(r"week\s+(\d{1,2})", q_lower)
-        if m:
-            spec["filters"]["week"] = int(m.group(1))
+    # ----------------------------
+    # special rule: explicit compare
+    # ----------------------------
+    if "compare" in q_lower:
+        spec["aggregation"] = "compare"  # treated as sum_mci later
 
-        # Extract explicit year
-        y = re.search(r"(20[2-3][0-9])", q_lower)
-        if y:
-            spec["filters"]["year"] = int(y.group(1))
+        # 1) If a specific week is mentioned → extract week + year
+        if "week" in q_lower:
+            mw = re.search(r"week\s+(\d{1,2})", q_lower)
+            if mw:
+                spec["filters"]["week"] = int(mw.group(1))
 
-        # COUNTRY compare detection
-        country_list = [
-            "germany","france","austria","israel","brazil","netherlands","china",
-            "united states","switzerland","italy","spain","portugal","canada"
+            # if year not yet set, try again here
+            my = re.search(r"(20[2-3][0-9])", q_lower)
+            if my:
+                spec["filters"]["year"] = int(my.group(1))
+
+        # 2) COUNTRY comparison: two country names in same question
+        country_candidates = [
+            "germany", "austria", "israel", "brazil", "netherlands",
+            "switzerland", "italy", "spain", "portugal", "canada",
+            "china", "argentina", "singapore", "united states", "usa"
         ]
-        countries_in_q = [c for c in country_list if c in q_lower]
-
+        countries_in_q = [c for c in country_candidates if c in q_lower]
         if len(countries_in_q) >= 2:
+            # compare multiple countries → group by country
             spec["group_by"] = ["country"]
+            # we could later add compare.entities here if we want to filter down
 
-        # DISTRIBUTOR compare detection
+        # 3) DISTRIBUTOR comparison: DSD vs PI Medical
         if "dsd" in q_lower and "pi medical" in q_lower:
+            # compare distributors → group by distributor
             spec["group_by"] = ["distributor"]
 
-        # CUSTOMER compare detection
-        customer_keywords = ["hospital", "medical center", "clinic", "essen"]
-        if sum(k in q_lower for k in customer_keywords) >= 2:
-            spec["group_by"] = ["customer"]
+        # 4) "per year" style: add year to group_by if requested
+        if any(kw in q_lower for kw in ["per year", "by year", "yearly", "in years"]):
+            if "year" not in spec["group_by"]:
+                spec["group_by"].append("year")
+
+    return spec
+
 
 
 def _augment_spec_with_date_heuristics(question: str, spec: Dict[str, Any]) -> Dict[str, Any]:
