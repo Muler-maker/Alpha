@@ -249,6 +249,112 @@ MONTH / QUARTER / HALF-YEAR FILTERS
 
 You may combine year with month, quarter, or half_year.
 
+COMPARISON MODE RULES
+
+Comparison mode must be triggered whenever the user asks to compare:
+- two time periods
+- two entities (customers, distributors, countries)
+- or requests a table with multiple dimensions.
+
+Trigger comparison if the question contains:
+"compare", "versus", "vs", "compared to", "difference between",
+"how does X compare to Y"
+
+When comparison mode is triggered:
+aggregation = "compare"
+unless the user explicitly says "growth", "increase", "decrease",
+"growth rate", "YoY growth" → then use aggregation = "growth_rate".
+
+------------------------------
+TIME–TO–TIME COMPARISONS
+------------------------------
+
+Examples:
+"Compare 2024 and 2025"
+"Compare Q4 2024 with Q1 2025"
+"Compare week 12 of 2024 with week 12 of 2025"
+"Compare the last 6 weeks with the 6 weeks before"
+"How did Germany change from 2023 to 2024?"
+"Show YoY for Germany"
+
+Populate:
+compare.period_a = { year, quarter, month, half_year, week, or time_window }
+compare.period_b = { year, quarter, month, half_year, week, or time_window }
+
+Rules:
+- “YoY” → previous year vs current year
+- “last N weeks vs previous N weeks”:
+    period_a = last N weeks
+    period_b = N weeks before that (previous window)
+- If dimensions do not match, obey exactly what the user wrote.
+
+Do NOT use filters.week for dynamic windows.  
+Use time_window instead.
+
+------------------------------
+ENTITY–TO–ENTITY COMPARISONS
+------------------------------
+
+Examples:
+"Compare Germany and Austria in 2025"
+"Compare DSD with PI Medical Solutions"
+"Compare Essen vs St. Luke’s"
+
+Detect entity type:
+- if both match countries → entity_type = "country"
+- if both match customers → entity_type = "customer"
+- if both match distributors → entity_type = "distributor"
+
+Populate:
+compare.entities = ["X", "Y"]
+compare.entity_type = "country" | "customer" | "distributor"
+
+If a year is mentioned → filters.year = that year.
+
+------------------------------
+TABLE / PIVOT COMPARISONS
+------------------------------
+
+Examples:
+"Show distributors in rows and years in columns"
+"Yearly totals per distributor"
+"Country-by-country comparison"
+"Compare all countries over the last 6 weeks"
+
+Interpret:
+- “rows” → first group_by dimension
+- “columns” → second group_by dimension
+
+Example:
+group_by = ["distributor", "year"]
+output_format = "table"
+
+If comparison implied:
+aggregation = "compare"
+
+If rows/columns not explicit:
+use all detected dimensions.
+
+------------------------------
+WHEN TO USE GROWTH_RATE
+------------------------------
+
+If the user asks for:
+"growth", "increase", "decrease", "growth rate",
+"how much did X grow", "YoY growth":
+
+aggregation = "growth_rate"
+
+Otherwise:
+aggregation = "compare"
+
+------------------------------
+WEEK VS TIME_WINDOW RULE
+------------------------------
+
+- Explicit week → filters.week
+- Dynamic windows ("last N weeks", "previous N weeks") → time_window
+- Never set both.
 
 PRODUCT DIMENSIONS
 
@@ -513,9 +619,14 @@ def _interpret_question_fallback(
             }
         },
         "compare": {
-            "period_a": None,
-            "period_b": None
+            "period_a": None,         # dict: {year, quarter, month, half_year, week, time_window}
+            "period_b": None,         # same structure as period_a
+            "entities": None,         # list of two entities ["Germany", "Austria"]
+            "entity_type": None,      # "country", "distributor", or "customer"
+            "mode": None,             # "time", "entity", or "table"
+            "table_group_by": None    # list for table comparisons, e.g. ["distributor", "year"]
         },
+
         "explanation": "Heuristic interpretation without LLM.",
     }
 
@@ -1172,8 +1283,20 @@ def _run_aggregation(
     group_by = spec.get("group_by") or []
     group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
 
+    # Treat "compare" as a sum-based aggregation for now
+    if aggregation == "compare":
+        aggregation = "sum_mci"
+
     # --- SUM (default) ---
-    # --- SUM (default) ---
+    if aggregation == "sum_mci":
+        total_mci = float(df_filtered[total_col].sum())
+        if group_cols:
+            grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
+            # 👇 force nice integer display instead of scientific notation
+            grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
+            return grouped_df, total_mci
+        return None, total_mci
+
     if aggregation == "sum_mci":
         total_mci = float(df_filtered[total_col].sum())
         if group_cols:
@@ -1603,9 +1726,10 @@ def answer_question_from_df(
             "so I can't calculate a numeric answer."
         )
 
-    # SUM
-    if aggregation == "sum_mci":
+    # SUM (and basic comparison tables)
+    if aggregation in ("sum_mci", "compare"):
         if group_df is None:
+
             core_answer = (
                 f"Based on {status_text} for {filter_text}, the total ordered amount is "
                 f"**{numeric_value:,.0f} mCi**, calculated from **{row_count}** rows."
