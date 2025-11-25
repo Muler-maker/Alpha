@@ -1297,8 +1297,6 @@ def _build_metadata_snippet(df_filtered: pd.DataFrame, spec: Dict[str, Any]) -> 
 
     return intro + bullets
 
-
-
 def _run_aggregation(
     df_filtered: pd.DataFrame,
     spec: Dict[str, Any],
@@ -1340,11 +1338,46 @@ def _run_aggregation(
             if not entity_col:
                 return None, float("nan")
             
-            # Filter to only the entities we're comparing
-            df_compare = df_filtered[df_filtered[entity_col].isin(entities)].copy()
-            
-            if df_compare.empty:
-                return None, float("nan")
+            # Special handling for product comparisons (use fuzzy matching)
+            if entity_type == "product_sold":
+                all_rows = []
+                for entity_val in entities:
+                    # Create a temporary spec for this product
+                    temp_spec = copy.deepcopy(spec)
+                    temp_spec["filters"]["product_sold"] = entity_val
+                    temp_spec["aggregation"] = "sum_mci"  # temporarily change
+                    
+                    # Apply filters (which includes smart product matching)
+                    df_entity = _apply_filters(base_df, temp_spec)
+                    
+                    if not df_entity.empty:
+                        # Add a column to identify which entity this is
+                        df_entity = df_entity.copy()
+                        df_entity["_CompareEntity"] = entity_val
+                        all_rows.append(df_entity)
+                
+                if not all_rows:
+                    return None, float("nan")
+                
+                df_compare = pd.concat(all_rows, ignore_index=True)
+                entity_col = "_CompareEntity"
+            else:
+                # For non-product entities, use fuzzy string matching
+                def matches_entity(val, entity_search):
+                    """Check if val contains the entity_search term (case-insensitive)"""
+                    if pd.isna(val):
+                        return False
+                    return str(entity_search).lower() in str(val).lower()
+                
+                # Build a mask for rows matching ANY of the entities
+                mask = pd.Series(False, index=df_filtered.index)
+                for entity_val in entities:
+                    mask |= df_filtered[entity_col].apply(lambda x: matches_entity(x, entity_val))
+                
+                df_compare = df_filtered[mask].copy()
+                
+                if df_compare.empty:
+                    return None, float("nan")
             
             # Group by entity (and any other group_by dimensions)
             if group_cols and entity_col not in group_cols:
@@ -1544,7 +1577,6 @@ def _run_aggregation(
         grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
         return grouped_df, total_mci
     return None, total_mci
-
 def _build_chart_block(
     group_df: pd.DataFrame,
     spec: Dict[str, Any],
