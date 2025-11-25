@@ -1335,7 +1335,8 @@ def _run_aggregation(
         return None, float("nan")
 
     # Base DF for mapping + some aggregations
-    base_df = full_df if isinstance(full_df, pd.DataFrame) else df_filtered
+    # Always use df_filtered for identifying column mappings
+    base_df = df_filtered
     mapping = _get_mapping(base_df)
     total_col = mapping.get("total_mci")
 
