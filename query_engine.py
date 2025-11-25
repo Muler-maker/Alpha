@@ -1464,13 +1464,20 @@ def _run_aggregation(
                     terb_like = series.str.contains("terb|tb-161|tb161|161tb", regex=True)
                     return df[nca_like & ~terb_like]
 
-                # CA bucket (carrier-added Lutetium, excluding Terbium)
+                # CA bucket (carrier added Lutetium, excluding Terbium and all NCA-like strings)
                 if label == "ca":
-                    ca_like = series.str.contains("c.a|carrier added", regex=True)
+                    # Anything that looks NCA-like (we'll explicitly exclude this)
+                    nca_like = series.str.contains("n.c.a|nca|non carrier|non-carrier", regex=True)
+
+                    # CA-like patterns (C.A, carrier added). Use a slightly stricter regex,
+                    # then subtract anything that looks NCA-like.
+                    ca_like_raw = series.str.contains(r"c\.a|carrier added", regex=True)
+                    ca_like = ca_like_raw & ~nca_like
+
                     terb_like = series.str.contains("terb|tb-161|tb161|161tb", regex=True)
                     return df[ca_like & ~terb_like]
 
-                # Generic fallback: substring match
+                # Generic fallback: contains label (ignore NaNs)
                 return df[series.str.contains(label, na=False)]
 
             rows: List[pd.DataFrame] = []
