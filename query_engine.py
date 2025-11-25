@@ -1334,117 +1334,144 @@ def _run_aggregation(
     if df_filtered is None or not isinstance(df_filtered, pd.DataFrame) or df_filtered.empty:
         return None, float("nan")
 
+    # Base DF for mapping + some aggregations
     base_df = full_df if isinstance(full_df, pd.DataFrame) else df_filtered
     mapping = _get_mapping(base_df)
     total_col = mapping.get("total_mci")
 
     if not total_col or total_col not in base_df.columns:
+        # If we genuinely can't find the Total_mCi column, bail out
         return None, float("nan")
 
     aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
     group_by = spec.get("group_by") or []
     group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
 
-    # --- COMPARE MODE (entity or time comparison) ---
+    # ------------------------------------------------------------------
+    # COMPARE MODE (entity or time comparison)
+    # ------------------------------------------------------------------
     if aggregation == "compare":
         compare = spec.get("compare") or {}
         entities = compare.get("entities")
         entity_type = compare.get("entity_type")
-        
-        # Entity-to-entity comparison (e.g., Austria vs Germany, DSD vs PI Medical)
-        if entities and entity_type:
+
+        # --------------------------------------------------------------
+        # 1) ENTITY-TO-ENTITY COMPARISON
+        #    e.g. DSD vs PI Medical, Germany vs Austria, etc.
+        # --------------------------------------------------------------
+        if entities and entity_type and entity_type not in ("product_sold", "product_catalogue"):
             entity_col = mapping.get(entity_type)
-            
-            # Special handling for product comparisons (use existing product filter logic)
-            if entity_type == "product_sold" or entity_type == "product_catalogue":
-                all_rows = []
-                for entity_val in entities:
-                    # Create a temporary spec for this product
-                    temp_spec = copy.deepcopy(spec)
-                    temp_filters = temp_spec.get("filters", {}) or {}
-                    temp_filters[entity_type] = entity_val
-                    temp_spec["filters"] = temp_filters
-                    temp_spec["aggregation"] = "sum_mci"
-                    
-                    # Apply filters (which includes smart product matching)
-                    df_entity = _apply_filters(base_df, temp_spec)
-                    
-                    if not df_entity.empty and total_col in df_entity.columns:
-                        # Add a column to identify which entity this is
-                        df_entity = df_entity.copy()
-                        df_entity["_CompareEntity"] = entity_val
-                        all_rows.append(df_entity)
-                
-                if not all_rows:
-                    return None, float("nan")
-                
-                df_compare = pd.concat(all_rows, ignore_index=True)
-                entity_col = "_CompareEntity"
-                
-            elif not entity_col or entity_col not in df_filtered.columns:
-                # Entity column doesn't exist, return empty
+            if not entity_col or entity_col not in df_filtered.columns:
                 return None, float("nan")
-                
-            else:
-                # For non-product entities, use fuzzy string matching
-                def matches_entity(val, entity_search):
-                    """Check if val contains the entity_search term (case-insensitive)"""
-                    if pd.isna(val):
-                        return False
-                    val_str = str(val).lower()
-                    search_str = str(entity_search).lower()
-                    return search_str in val_str
-                
-                # Build a mask for rows matching ANY of the entities
-                mask = pd.Series(False, index=df_filtered.index)
-                for entity_val in entities:
-                    entity_mask = df_filtered[entity_col].apply(lambda x: matches_entity(x, entity_val))
-                    mask |= entity_mask
-                
-                df_compare = df_filtered[mask].copy()
-                
-                if df_compare.empty:
-                    return None, float("nan")
-            
-            # Ensure total_col exists in df_compare
-            if total_col not in df_compare.columns:
+
+            def _match_entity(cell, target):
+                if pd.isna(cell):
+                    return False
+                return str(target).lower() in str(cell).lower()
+
+            rows = []
+            for ent in entities:
+                sub = df_filtered[df_filtered[entity_col].apply(lambda x: _match_entity(x, ent))]
+                if sub.empty:
+                    continue
+                sub = sub.copy()
+                sub["_CompareEntity"] = ent
+                rows.append(sub)
+
+            if not rows:
                 return None, float("nan")
-            
-            # Group by entity (and any other group_by dimensions)
-            if group_cols and entity_col not in group_cols:
-                group_cols_with_entity = [entity_col] + group_cols
-            elif entity_col not in group_cols:
-                group_cols_with_entity = [entity_col]
-            else:
-                group_cols_with_entity = group_cols
-            
+
+            df_compare = pd.concat(rows, ignore_index=True)
+
+            # Build grouping: CompareEntity + any other dimension (except the entity itself)
+            extra_group_cols = [
+                mapping[g]
+                for g in group_by
+                if g != entity_type and mapping.get(g)
+            ]
+            group_cols_with_entity = ["_CompareEntity"] + extra_group_cols if extra_group_cols else ["_CompareEntity"]
+
             grouped_df = df_compare.groupby(group_cols_with_entity, as_index=False)[total_col].sum()
             grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
-            
             total_mci = float(df_compare[total_col].sum())
             return grouped_df, total_mci
-        
-        # Time-to-time comparison (handled by period_a and period_b)
+
+        # --------------------------------------------------------------
+        # 2) PRODUCT COMPARISON (CA vs NCA, etc.) ON product_sold
+        #    entities = ["CA", "NCA"], entity_type = "product_sold"
+        # --------------------------------------------------------------
+        if entities and entity_type in ("product_sold", "product_catalogue"):
+            prod_col = mapping.get("product_sold") if entity_type == "product_sold" else mapping.get("product_catalogue")
+            if not prod_col or prod_col not in df_filtered.columns:
+                return None, float("nan")
+
+            col = df_filtered[prod_col].astype(str).str.lower()
+
+            def _product_subset(df, label: str) -> pd.DataFrame:
+                label = str(label).lower()
+                series = df[prod_col].astype(str).str.lower()
+
+                # NCA bucket (non-carrier added Lutetium, excluding Terbium)
+                if label == "nca":
+                    nca_like = series.str.contains("n.c.a|nca|non carrier|non-carrier", regex=True)
+                    terb_like = series.str.contains("terb|tb-161|tb161|161tb", regex=True)
+                    return df[nca_like & ~terb_like]
+
+                # CA bucket (carrier added Lutetium, excluding Terbium)
+                if label == "ca":
+                    ca_like = series.str.contains("c.a|carrier added", regex=True)
+                    terb_like = series.str.contains("terb|tb-161|tb161|161tb", regex=True)
+                    return df[ca_like & ~terb_like]
+
+                # Generic fallback: contains label
+                return df[series.str.contains(label)]
+
+            rows = []
+            for ent in entities:
+                sub = _product_subset(df_filtered, ent)
+                if sub.empty:
+                    continue
+                sub = sub.copy()
+                sub["_CompareEntity"] = ent
+                rows.append(sub)
+
+            if not rows:
+                return None, float("nan")
+
+            df_compare = pd.concat(rows, ignore_index=True)
+
+            # Usually we just want CA vs NCA totals; extra dimensions are already
+            # fixed by filters (e.g. week 25, year 2025), so group by CompareEntity
+            grouped_df = df_compare.groupby(["_CompareEntity"], as_index=False)[total_col].sum()
+            grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
+            total_mci = float(df_compare[total_col].sum())
+            return grouped_df, total_mci
+
+        # --------------------------------------------------------------
+        # 3) TIME-TO-TIME COMPARISON (if period_a / period_b given)
+        #    We piggy-back on the growth_rate logic.
+        # --------------------------------------------------------------
         period_a = compare.get("period_a")
         period_b = compare.get("period_b")
-        
         if period_a and period_b:
-            # This is actually a growth_rate scenario, delegate to that
             spec["aggregation"] = "growth_rate"
             return _run_aggregation(df_filtered, spec, full_df)
-        
-        # Fallback: if compare is set but no entities/periods, treat as grouped sum
+
+        # --------------------------------------------------------------
+        # 4) Fallback: behave like a grouped sum if no entities/periods
+        # --------------------------------------------------------------
         if group_cols:
             grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
             grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
             total_mci = float(df_filtered[total_col].sum())
             return grouped_df, total_mci
-        
-        # No grouping, just return total
+
         total_mci = float(df_filtered[total_col].sum())
         return None, total_mci
 
-    # --- SUM (default) ---
+    # ------------------------------------------------------------------
+    # SUM (default)
+    # ------------------------------------------------------------------
     if aggregation == "sum_mci":
         total_mci = float(df_filtered[total_col].sum())
         if group_cols:
@@ -1453,7 +1480,9 @@ def _run_aggregation(
             return grouped_df, total_mci
         return None, total_mci
 
-    # --- AVERAGE ---
+    # ------------------------------------------------------------------
+    # AVERAGE
+    # ------------------------------------------------------------------
     if aggregation == "average_mci":
         if not group_cols:
             avg_val = float(df_filtered[total_col].mean())
@@ -1464,7 +1493,9 @@ def _run_aggregation(
         overall_avg = float(df_filtered[total_col].mean())
         return grouped_df, overall_avg
 
-    # --- SHARE OF TOTAL ---
+    # ------------------------------------------------------------------
+    # SHARE OF TOTAL
+    # ------------------------------------------------------------------
     if aggregation == "share_of_total":
         if group_cols:
             total = float(df_filtered[total_col].sum())
@@ -1484,6 +1515,7 @@ def _run_aggregation(
         base_spec = copy.deepcopy(spec)
         base_filters = base_spec.get("filters", {}) or {}
 
+        # Remove entity filters for denominator
         for k in ["customer", "distributor", "country", "region"]:
             base_filters[k] = None
         base_spec["filters"] = base_filters
@@ -1502,7 +1534,9 @@ def _run_aggregation(
         share = numerator / denominator
         return None, float(share)
 
-    # --- GROWTH RATE ---
+    # ------------------------------------------------------------------
+    # GROWTH RATE
+    # ------------------------------------------------------------------
     if aggregation == "growth_rate":
         if full_df is None or not isinstance(full_df, pd.DataFrame):
             return None, float("nan")
@@ -1521,6 +1555,7 @@ def _run_aggregation(
             temp_spec["filters"] = f
             return _apply_filters(full_df, temp_spec)
 
+        # --- No grouping: single global growth number
         if not group_cols:
             def _sum_for_period(period_filters: Dict[str, Any]) -> float:
                 df_p = _df_for_period(period_filters)
@@ -1539,6 +1574,7 @@ def _run_aggregation(
             growth = (sum_b - sum_a) / sum_a
             return None, float(growth)
 
+        # --- Grouped growth by the chosen dimensions
         df_a = _df_for_period(period_a)
         df_b = _df_for_period(period_b)
 
@@ -1601,13 +1637,16 @@ def _run_aggregation(
 
         return merged, overall_growth
 
+    # ------------------------------------------------------------------
     # Fallback: treat as sum
+    # ------------------------------------------------------------------
     total_mci = float(df_filtered[total_col].sum())
     if group_cols:
         grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
         grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
         return grouped_df, total_mci
     return None, total_mci
+
 def _build_chart_block(
     group_df: pd.DataFrame,
     spec: Dict[str, Any],
