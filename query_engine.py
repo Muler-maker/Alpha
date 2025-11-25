@@ -1312,6 +1312,7 @@ def _run_aggregation(
       - average_mci (per group + overall)
       - share_of_total (per group, within current filters)
       - growth_rate (per group, between period A and B)
+      - compare (entity-to-entity or time-to-time comparison)
     """
     if df_filtered is None or not isinstance(df_filtered, pd.DataFrame) or df_filtered.empty:
         return None, float("nan")
@@ -1327,54 +1328,73 @@ def _run_aggregation(
     group_by = spec.get("group_by") or []
     group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
 
-    # Treat "compare" as a sum-based aggregation for now
+    # --- COMPARE MODE (entity or time comparison) ---
     if aggregation == "compare":
-        aggregation = "sum_mci"
-    # Determine aggregation mode
-    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
-
-    # ---------------------------------------------------------
-    # TEMPORARY FIX FOR FALLBACK "compare" QUESTIONS
-    # The real full comparison mode will come soon.
-    # For now: treat "compare" as a grouped SUM.
-    # Example: "Compare Germany to Austria in week 25 of 2025"
-    # → fallback sets group_by=["country"], aggregation="compare"
-    # → we convert it to standard "sum_mci"
-    # ---------------------------------------------------------
-    if aggregation == "compare":
-        aggregation = "sum_mci"
-
-    group_by = spec.get("group_by") or []
-    group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
-
+        compare = spec.get("compare") or {}
+        entities = compare.get("entities")
+        entity_type = compare.get("entity_type")
+        
+        # Entity-to-entity comparison (e.g., Austria vs Germany, DSD vs PI Medical)
+        if entities and entity_type:
+            entity_col = mapping.get(entity_type)
+            if not entity_col:
+                return None, float("nan")
+            
+            # Filter to only the entities we're comparing
+            df_compare = df_filtered[df_filtered[entity_col].isin(entities)].copy()
+            
+            if df_compare.empty:
+                return None, float("nan")
+            
+            # Group by entity (and any other group_by dimensions)
+            if group_cols and entity_col not in group_cols:
+                group_cols_with_entity = [entity_col] + group_cols
+            elif entity_col not in group_cols:
+                group_cols_with_entity = [entity_col]
+            else:
+                group_cols_with_entity = group_cols
+            
+            grouped_df = df_compare.groupby(group_cols_with_entity, as_index=False)[total_col].sum()
+            grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
+            
+            total_mci = float(df_compare[total_col].sum())
+            return grouped_df, total_mci
+        
+        # Time-to-time comparison (handled by period_a and period_b)
+        period_a = compare.get("period_a")
+        period_b = compare.get("period_b")
+        
+        if period_a and period_b:
+            # This is actually a growth_rate scenario, delegate to that
+            spec["aggregation"] = "growth_rate"
+            return _run_aggregation(df_filtered, spec, full_df)
+        
+        # Fallback: if compare is set but no entities/periods, treat as grouped sum
+        if group_cols:
+            grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
+            grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
+            total_mci = float(df_filtered[total_col].sum())
+            return grouped_df, total_mci
+        
+        # No grouping, just return total
+        total_mci = float(df_filtered[total_col].sum())
+        return None, total_mci
 
     # --- SUM (default) ---
     if aggregation == "sum_mci":
         total_mci = float(df_filtered[total_col].sum())
         if group_cols:
             grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
-            # 👇 force nice integer display instead of scientific notation
-            grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
-            return grouped_df, total_mci
-        return None, total_mci
-
-    if aggregation == "sum_mci":
-        total_mci = float(df_filtered[total_col].sum())
-        if group_cols:
-            grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
-            # 👇 force nice integer display instead of scientific notation
             grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
             return grouped_df, total_mci
         return None, total_mci
 
     # --- AVERAGE ---
     if aggregation == "average_mci":
-        # If no grouping, return a single scalar as before
         if not group_cols:
             avg_val = float(df_filtered[total_col].mean())
             return None, avg_val
 
-        # With grouping: average per group + overall average
         grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].mean()
         grouped_df = grouped_df.rename(columns={total_col: "Average_mCi"})
         overall_avg = float(df_filtered[total_col].mean())
@@ -1382,7 +1402,6 @@ def _run_aggregation(
 
     # --- SHARE OF TOTAL ---
     if aggregation == "share_of_total":
-        # Grouped share-of-total: denominator = total within current filtered slice
         if group_cols:
             total = float(df_filtered[total_col].sum())
             if total == 0:
@@ -1392,19 +1411,15 @@ def _run_aggregation(
             grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
             grouped_df["ShareOfTotal"] = grouped_df[total_col] / total
             spec["_share_debug"] = {"denominator": total}
-            # numeric_value is not meaningful here – table holds the important info
             return grouped_df, float("nan")
 
-        # Non-grouped: keep the original numerator/denominator logic (single entity share)
         if full_df is None or not isinstance(full_df, pd.DataFrame):
             return None, float("nan")
 
         numerator = float(df_filtered[total_col].sum())
-
         base_spec = copy.deepcopy(spec)
         base_filters = base_spec.get("filters", {}) or {}
 
-        # Remove entity filters from denominator
         for k in ["customer", "distributor", "country", "region"]:
             base_filters[k] = None
         base_spec["filters"] = base_filters
@@ -1435,7 +1450,6 @@ def _run_aggregation(
         time_keys = ["year", "week", "month", "quarter", "half_year"]
 
         def _df_for_period(period_filters: Dict[str, Any]) -> pd.DataFrame:
-            # Use period definition as the authoritative time filter
             temp_spec = copy.deepcopy(spec)
             f = temp_spec.get("filters", {}) or {}
             for key in time_keys:
@@ -1443,7 +1457,6 @@ def _run_aggregation(
             temp_spec["filters"] = f
             return _apply_filters(full_df, temp_spec)
 
-        # Scalar growth (no grouping) – same as before but with stricter time override
         if not group_cols:
             def _sum_for_period(period_filters: Dict[str, Any]) -> float:
                 df_p = _df_for_period(period_filters)
@@ -1462,7 +1475,6 @@ def _run_aggregation(
             growth = (sum_b - sum_a) / sum_a
             return None, float(growth)
 
-        # Group-wise growth: compute period A and B per group
         df_a = _df_for_period(period_a)
         df_b = _df_for_period(period_b)
 
@@ -1492,7 +1504,6 @@ def _run_aggregation(
             if a == 0 and b == 0:
                 return 0.0
             if a == 0 and b > 0:
-                # New group; growth rate formally infinite / undefined
                 return float("nan")
             return (b - a) / a
 
@@ -1530,6 +1541,7 @@ def _run_aggregation(
     total_mci = float(df_filtered[total_col].sum())
     if group_cols:
         grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
+        grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
         return grouped_df, total_mci
     return None, total_mci
 
