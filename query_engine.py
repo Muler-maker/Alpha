@@ -1618,7 +1618,49 @@ def _run_aggregation(
 
         share = numerator / denominator
         return None, float(share)
+# Add this section right after the SHARE OF TOTAL handler
+# (around line 1230 in answer_question_from_df)
 
+# GROWTH RATE
+elif aggregation == "growth_rate":
+    growth_debug = spec.get("_growth_debug", {}) or {}
+    mode = growth_debug.get("mode")
+    
+    if group_df is None:
+        # Single global growth rate
+        growth_pct = numeric_value * 100.0
+        sum_a = growth_debug.get("period_a_sum", 0)
+        sum_b = growth_debug.get("period_b_sum", 0)
+        
+        core_answer = (
+            f"Based on {status_text} for {filter_text}, "
+            f"the growth rate is **{growth_pct:.1f}%**. "
+            f"Period A total: **{sum_a:,.0f} mCi**, "
+            f"Period B total: **{sum_b:,.0f} mCi**."
+        )
+    else:
+        # Grouped growth rate table
+        preview_md = group_df.to_markdown(index=False)
+        
+        if mode == "auto_time_series":
+            # Automatic time-series growth (e.g., "distributors growth over years")
+            header = (
+                f"Here is the **growth rate breakdown** for {status_text} for {filter_text}. "
+                f"Growth is calculated comparing each period to the previous period.\n\n"
+            )
+        else:
+            # Explicit period A vs B comparison
+            sum_a = growth_debug.get("period_a_sum", 0)
+            sum_b = growth_debug.get("period_b_sum", 0)
+            overall_growth_pct = numeric_value * 100.0 if not pd.isna(numeric_value) else 0
+            
+            header = (
+                f"Here is the **growth rate breakdown** for {status_text} for {filter_text}. "
+                f"Overall growth: **{overall_growth_pct:.1f}%** "
+                f"(from **{sum_a:,.0f} mCi** to **{sum_b:,.0f} mCi**).\n\n"
+            )
+        
+        core_answer = header + preview_md
     # ------------------------------------------------------------------
     # GROWTH RATE
     # ------------------------------------------------------------------
