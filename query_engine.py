@@ -1819,6 +1819,71 @@ def _disambiguate_customer_vs_distributor(df: pd.DataFrame, spec: Dict[str, Any]
     spec["filters"] = filters
     return spec
 
+def _reshape_for_display(group_df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
+    """
+    Reshape aggregated data into a more pivot-like layout when possible:
+    - Put time dimensions (Year, Week, Quarter, Half year, Month) in columns.
+    - Keep non-time dimensions (Distributor, Region, etc.) as rows.
+    Works for sum, average and grouped growth_rate outputs.
+    """
+    if group_df is None or group_df.empty:
+        return group_df
+
+    df = group_df.copy()
+
+    # Identify time dimensions
+    time_cols_priority = ["Year", "Quarter", "Month", "Week", "Half year"]
+    time_cols = [c for c in time_cols_priority if c in df.columns]
+
+    if not time_cols:
+        # Nothing to pivot on
+        return df
+
+    # Use a single dominant time dimension (Year > Quarter > Month > Week > Half year)
+    time_col = time_cols[0]
+
+    # Identify metric columns (mCi, growth, abs change, averages)
+    metric_candidates = [
+        c
+        for c in df.columns
+        if any(
+            k in str(c).lower()
+            for k in ["mci", "growthrate", "abschange", "average"]
+        )
+    ]
+
+    if not metric_candidates:
+        return df
+
+    # Non-time, non-metric dimensions become the row index
+    non_time_non_metric = [
+        c for c in df.columns if c not in [time_col] + metric_candidates
+    ]
+    idx_cols = non_time_non_metric or None
+
+    if len(metric_candidates) == 1:
+        metric = metric_candidates[0]
+        if idx_cols:
+            # Example: Distributor x Year → Distributor row, years as columns
+            pivot_df = df.pivot(
+                index=idx_cols,
+                columns=time_col,
+                values=metric,
+            ).reset_index()
+        else:
+            # Example: NCA per Year → single row, years as columns
+            pivot_df = df.pivot_table(
+                index=None,
+                columns=time_col,
+                values=metric,
+                aggfunc="sum",
+            ).reset_index(drop=True)
+    else:
+        # Multiple metrics: keep as-is for now (like your weekly growth table)
+        return df
+
+    pivot_df.columns = [str(c) for c in pivot_df.columns]
+    return pivot_df
 
 def answer_question_from_df(
     question: str,
@@ -1878,12 +1943,29 @@ def answer_question_from_df(
             group_df = wide
 
     # --- Ensure all mCi values and year columns are whole numbers, no scientific notation ---
+
+    filters = spec.get("filters", {}) or {}
+    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
+    # 🔁 Pivot-style reshaping for time dimensions (Year / Week / Quarter / Half year / Month)
+    group_df = _reshape_for_display(group_df, spec)
+
+    # --- Format numeric columns (no decimals / scientific notation) ---
     if group_df is not None and not group_df.empty:
         for col in group_df.columns:
             col_lower = str(col).lower()
-            is_year_col = col.isdigit()  # e.g. "2022", "2023"
+            is_year_col = False
+            try:
+                # If the column name is like "2024", int("2024") works and matches back
+                is_year_col = str(int(col)) == str(col)
+            except Exception:
+                pass
 
-            if "mci" in col_lower or is_year_col:
+            if (
+                "mci" in col_lower
+                or "growthrate" in col_lower
+                or "abschange" in col_lower
+                or is_year_col
+            ):
                 try:
                     group_df[col] = (
                         pd.to_numeric(group_df[col], errors="coerce")
@@ -1893,11 +1975,6 @@ def answer_question_from_df(
                     )
                 except Exception:
                     pass
-
-
-
-    filters = spec.get("filters", {}) or {}
-    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
 
     parts = []
     if filters.get("customer"):
