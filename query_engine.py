@@ -971,7 +971,8 @@ def _augment_spec_with_date_heuristics(question: str, spec: Dict[str, Any]) -> D
 
     spec["filters"] = filters
     spec["time_window"] = tw
-        # --- ENSURE WEEK EXTRACTION ALWAYS HAPPENS ---
+
+    # --- ENSURE WEEK EXTRACTION ALWAYS HAPPENS ---
     # Handles cases like "reason for the drop in week 20"
     if not filters.get("week"):
         m = re.search(r"week\s+(\d{1,2})", q)
