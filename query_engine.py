@@ -967,6 +967,17 @@ def _augment_spec_with_date_heuristics(question: str, spec: Dict[str, Any]) -> D
         filters.get("year") is not None and
         filters.get("week") is not None
     )
+    # --- WEEK (explicit single week if no dynamic time_window) ---
+    # If we don't already have a week, and there is no dynamic window,
+    # look for patterns like "week 20", "week 3", "week 25 of 2025", etc.
+    tw = spec.get("time_window") or {}
+    if not filters.get("week") and not tw.get("mode"):
+        m = re.search(r"\bweek\s+(\d{1,2})\b", q)
+        if m:
+            try:
+                filters["week"] = int(m.group(1))
+            except ValueError:
+                pass
 
     return spec
 
