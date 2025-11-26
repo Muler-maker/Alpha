@@ -646,6 +646,10 @@ ALWAYS:
     if "compare" in q_lower and "ca" in q_lower and "nca" in q_lower:
         ...
         spec["group_by"] = gb
+    # Flag "why / reason / drop" style questions so we know to use metadata
+    spec["_question_text"] = question
+    why_keywords = ["why", "reason", "cause", "drop", "decline", "decrease", "went down"]
+    spec["_why_question"] = any(k in q_lower for k in why_keywords)
 
     # 🔒 Global safety net: if the user clearly asked for "per year"
     # but the LLM forgot to include 'year' in group_by, add it.
@@ -654,7 +658,22 @@ ALWAYS:
         if "year" not in gb:
             gb.append("year")
         spec["group_by"] = gb
-        
+    # ✅ Mark "why" questions + capture year/week if already set by the LLM
+    q_stripped = (question or "").strip().lower()
+    if q_stripped.startswith("why"):
+        spec["_why_question"] = True
+        filters = spec.get("filters") or {}
+        spec["filters"] = filters  # keep attached
+        if filters.get("year"):
+            try:
+                spec["_why_year"] = int(filters["year"])
+            except Exception:
+                pass
+        if filters.get("week"):
+            try:
+                spec["_why_week"] = int(filters["week"])
+            except Exception:
+                pass       
     return spec
 
 def _interpret_question_fallback(
@@ -2099,8 +2118,16 @@ def answer_question_from_df(
 
     # 1) Build & normalize the spec
     spec = _interpret_question_with_llm(question, history=history)
-    spec["_question_text"] = question
 
+    # 🔧 Ensure we have a year for "why" questions with an explicit week but no year
+    filters = spec.get("filters") or {}
+    spec["filters"] = filters  # keep attached to spec
+    if spec.get("_why_question") and filters.get("week") and not filters.get("year"):
+        if "Year" in consolidated_df.columns and not consolidated_df["Year"].dropna().empty:
+            filters["year"] = int(consolidated_df["Year"].max())
+
+    spec["_question_text"] = question
+        
     try:
         spec = _normalize_product_filters(spec, question)
     except NameError:
