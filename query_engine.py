@@ -1233,12 +1233,6 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     time_window = spec.get("time_window") or {}
     if time_window.get("mode"):
         result = _apply_time_window(result, spec)
-    # --------------------
-    # DYNAMIC WEEK WINDOW
-    # --------------------
-    time_window = spec.get("time_window") or {}
-    if time_window.get("mode"):
-        result = _apply_time_window(result, spec)
 
     return result
 
