@@ -2336,14 +2336,6 @@ def _build_chart_block(
     spec: Dict[str, Any],
     aggregation: str
 ) -> Optional[str]:
-    """
-    Build a JSON chart spec and wrap it in a ```chart code block.
-
-    The frontend (or a helper in Jupyter) can parse this block and render:
-      - bar charts
-      - line charts
-      - pie charts
-    """
     import json
 
     if group_df is None or group_df.empty:
@@ -2353,79 +2345,25 @@ def _build_chart_block(
     if not cols:
         return None
 
+    # 🔧 NEW: safe lowercase list of column names as strings
+    lower_cols = [str(c).lower() for c in cols]
+
     group_by = spec.get("group_by") or []
 
     # ---- Infer chart type from question + aggregation ----
     q_lower = (spec.get("_question_text") or "").lower()
-
-    if "pie" in q_lower and "line" not in q_lower and "bar" not in q_lower:
-        chart_type = "pie"
-    elif "line" in q_lower or "graph" in q_lower:
-        chart_type = "line"
-    elif "bar" in q_lower or "histogram" in q_lower:
-        chart_type = "bar"
-    else:
-        # Default: if there's a time dimension, line chart; else bar.
-        if any(k in group_by for k in ["week", "month", "quarter", "year"]):
-            chart_type = "line"
-        else:
-            chart_type = "bar"
-
-    # ---- Decide x / y fields ----
-    # Prefer: time-like on X, Total_mCi on Y.
-    numeric_cols = [c for c in cols if pd.api.types.is_numeric_dtype(group_df[c])]
-    non_numeric_cols = [c for c in cols if c not in numeric_cols]
-
-    # Find measure column
-    y_field = None
-    for cand in ["Total_mCi", "total_mci", "Amount_mCi", "amount_mci"]:
-        if cand in cols:
-            y_field = cand
-            break
-    if y_field is None and numeric_cols:
-        y_field = numeric_cols[0]
-
-    if chart_type == "pie":
-        # Pie: category -> value
-        x_field = None
-
-        # Use first non-numeric as category
-        if non_numeric_cols:
-            x_field = non_numeric_cols[0]
-        else:
-            # fabricate category from index
-            group_df = group_df.copy()
-            group_df["Category"] = range(1, len(group_df) + 1)
-            x_field = "Category"
-    else:
-        # Line / bar: choose a sensible X
-        time_candidates = [
-            "Week of supply", "week",
-            "Month", "month",
-            "Quarter", "quarter",
-            "Year", "year",
-        ]
-        x_field = None
-        for cand in time_candidates:
-            if cand in cols:
-                x_field = cand
-                break
-        if x_field is None:
-            if non_numeric_cols:
-                x_field = non_numeric_cols[0]
-            else:
-                # fallback category index
-                group_df = group_df.copy()
-                group_df["Category"] = range(1, len(group_df) + 1)
-                x_field = "Category"
+    ...
+    # (unchanged code in between)
+    ...
 
     # Optional series field (color grouping)
     series_field = None
     if chart_type in ("line", "bar"):
         # e.g. if we grouped by both year and week, use year as series
-        if "year" in [c.lower() for c in cols] and x_field.lower() != "year":
+        x_field_lower = str(x_field).lower()  # 🔧 safe even if x_field is not a string
+        if "year" in lower_cols and x_field_lower != "year":
             for c in cols:
-                if c.lower() == "year":
+                if str(c).lower() == "year":  # 🔧 safe lower()
                     series_field = c
                     break
 
@@ -2439,9 +2377,7 @@ def _build_chart_block(
         "data": group_df.to_dict(orient="records"),
     }
 
-    # IMPORTANT: wrap in ```chart so your UI / helper can detect it
     return "```chart\n" + json.dumps(code, indent=2) + "\n```"
-
 
 # --------------------------------------------------------------------
 # 3) PUBLIC ENTRYPOINT – called from app.py
