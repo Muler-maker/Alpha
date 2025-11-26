@@ -2397,12 +2397,25 @@ def answer_question_from_df(
     # 1) Build & normalize the spec
     spec = _interpret_question_with_llm(question, history=history)
 
-    # 🔧 Make original question available to downstream logic (e.g. projection vs actual)
-    spec["_question_text"] = question or ""
+    # 🔧 Ensure we have explicit week/year if they appear in the question text
+    q_lower = (question or "").lower()
+    filters = spec.get("filters") or {}
+
+    # If LLM didn't set week, try to extract "week 35", "week 7", etc.
+    if not filters.get("week"):
+        m_week = re.search(r"\bweek\s+(\d{1,2})\b", q_lower)
+        if m_week:
+            filters["week"] = int(m_week.group(1))
+
+    # If LLM didn't set year, try to extract 2024, 2025, etc.
+    if not filters.get("year"):
+        m_year = re.search(r"\b(20[2-3][0-9])\b", q_lower)
+        if m_year:
+            filters["year"] = int(m_year.group(1))
+
+    spec["filters"] = filters  # keep attached to spec
 
     # 🔧 Ensure we have a year for "why" questions with an explicit week but no year
-    filters = spec.get("filters") or {}
-    spec["filters"] = filters  # keep attached to spec
     if spec.get("_why_question") and filters.get("week") and not filters.get("year"):
         if "Year" in consolidated_df.columns and not consolidated_df["Year"].dropna().empty:
             filters["year"] = int(consolidated_df["Year"].max())
