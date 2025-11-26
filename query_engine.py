@@ -681,6 +681,45 @@ ALWAYS:
         if "year" not in gb:
             gb.append("year")
         spec["group_by"] = gb
+    # ✅ Mark "why" questions + capture year/week if already set by the LLM
+    q_stripped = (question or "").strip().lower()
+    if q_stripped.startswith("why"):
+        spec["_why_question"] = True
+        filters = spec.get("filters") or {}
+        spec["filters"] = filters  # keep attached
+        if filters.get("year"):
+            try:
+                spec["_why_year"] = int(filters["year"])
+            except Exception:
+                pass
+        if filters.get("week"):
+            try:
+                spec["_why_week"] = int(filters["week"])
+            except Exception:
+                pass       
+
+    # 🔧 Hard override for "drop in week X (of Y)" style questions
+    # to make sure we ALWAYS have (year, week) for metadata lookups.
+    import re
+    filters = spec.get("filters") or {}
+    spec["filters"] = filters
+
+    # Only bother if the question talks about a drop / demand + a week
+    if any(k in q_lower for k in ["drop", "demand"]) and "week" in q_lower:
+        m = re.search(r"week\s+(\d{1,2})\s*(?:of\s+)?(20[2-3][0-9])?", q_lower)
+        if m:
+            week_val = int(m.group(1))
+            filters["week"] = week_val
+
+            year_str = m.group(2)
+            if year_str:
+                filters["year"] = int(year_str)
+
+            # Feed this straight into the metadata helpers
+            spec["_why_question"] = True
+            spec["_why_week"] = week_val
+            if year_str:
+                spec["_why_year"] = int(year_str)
 
     return spec
    
