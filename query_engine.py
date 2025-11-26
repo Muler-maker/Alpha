@@ -905,6 +905,42 @@ def _augment_spec_with_date_heuristics(question: str, spec: Dict[str, Any]) -> D
 
     spec["filters"] = filters
     spec["time_window"] = tw
+        # --- ENSURE WEEK EXTRACTION ALWAYS HAPPENS ---
+    # Handles cases like "reason for the drop in week 20"
+    if not filters.get("week"):
+        m = re.search(r"week\s+(\d{1,2})", q)
+        if m:
+            try:
+                filters["week"] = int(m.group(1))
+            except Exception:
+                pass
+
+    # --- ENSURE YEAR EXTRACTION ALWAYS HAPPENS ---
+    # Handles cases where user omits year but previous question had one
+    if not filters.get("year"):
+        # 1. Try explicit year in text
+        m = re.search(r"\b(20[2-3][0-9])\b", q)
+        if m:
+            filters["year"] = int(m.group(1))
+        else:
+            # 2. Infer from history (if available)
+            # You must add history support: _augment_spec... currently doesn't receive it
+            last_year = spec.get("_inferred_year_from_history")
+            if last_year:
+                filters["year"] = last_year
+            else:
+                # 3. Fallback to latest year in metadata
+                try:
+                    filters["year"] = int(METADATA["Year"].max())
+                except Exception:
+                    pass
+
+    # --- FINAL: if BOTH year & week exist, enable metadata ---
+    spec["_metadata_ready"] = (
+        filters.get("year") is not None and
+        filters.get("week") is not None
+    )
+
     return spec
 
 
