@@ -1935,11 +1935,8 @@ def _run_aggregation(
         share = numerator / denominator
         return None, float(share)
 
-    # ------------------------------------------------------------------
-    # GROWTH RATE
-    # ------------------------------------------------------------------
-    # GROWTH RATE
-elif aggregation == "growth_rate":
+# GROWTH RATE
+if aggregation == "growth_rate":
     if full_df is None or not isinstance(full_df, pd.DataFrame):
         return None, float("nan")
 
@@ -2548,7 +2545,7 @@ def answer_question_from_df(
     # ------------------------------------------------------------------
     # GROWTH RATE
     # ------------------------------------------------------------------
-        elif aggregation == "growth_rate":
+    elif aggregation == "growth_rate":
         if group_df is None:
             # Single global growth number
             if numeric_value is None or pd.isna(numeric_value):
