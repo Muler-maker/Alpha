@@ -2545,10 +2545,10 @@ def answer_question_from_df(
             )
             core_answer = header + preview_md
 
-# ------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # GROWTH RATE
     # ------------------------------------------------------------------
-    elif aggregation == "growth_rate":
+        elif aggregation == "growth_rate":
         if group_df is None:
             # Single global growth number
             if numeric_value is None or pd.isna(numeric_value):
