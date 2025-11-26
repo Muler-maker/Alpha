@@ -1365,7 +1365,8 @@ DISRUPTION_KEYWORDS = [
     "spill", "late", "ampoule", "strike", "closed", "attack",
     "shutdown", "delay", "maintenance", "no production", "war",
     "weather", "airport", "shipment", "holiday", "easter", "supply",
-    "problem", "issue", "shortage"
+    "problem", "issue", "shortage", "failed", "failure", "batch failed",
+    "production only", "didn't supply", "didn't arrive", "forgot"
 ]
 
 TREND_KEYWORDS = [
@@ -1484,6 +1485,10 @@ def _build_metadata_snippet(df_filtered: pd.DataFrame, spec: Dict[str, Any]) -> 
     if not meta_cols:
         return None
 
+# 🔧 FIX: For "why" questions, show ALL metadata for the filtered week/period
+    # rather than requiring keyword matches
+    is_why_question = any(k in q for k in ["why", "reason", "drop", "increase", "decrease", "cause"])
+    
     if "cancel" in q or "rejected" in q:
         relevant_keys = CANCELLATION_RELEVANT_KEYWORDS
     elif any(k in q for k in ["why", "impact", "drop", "increase", "decrease", "change", "effect"]):
@@ -1510,11 +1515,18 @@ def _build_metadata_snippet(df_filtered: pd.DataFrame, spec: Dict[str, Any]) -> 
                 if any(ex in ev_lower for ex in EXCLUDE_GLOBAL_EVENTS):
                     continue
 
-                if not any(key in ev_lower for key in relevant_keys):
-                    continue
-
-                if event not in unique_events:
-                    unique_events.append(event)
+                # 🔧 FIX: For "why" questions, include ALL events for that week
+                # Otherwise, use keyword filtering
+                if is_why_question:
+                    # Show everything for the specific week/period
+                    if event not in unique_events:
+                        unique_events.append(event)
+                else:
+                    # Normal filtering for non-"why" questions
+                    if not any(key in ev_lower for key in relevant_keys):
+                        continue
+                    if event not in unique_events:
+                        unique_events.append(event)
 
     if not unique_events:
         return None
