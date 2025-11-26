@@ -1757,12 +1757,33 @@ def _run_aggregation(
     group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
 
     # ------------------------------------------------------------------
+    # Override aggregation if question clearly asks for projection vs actual
+    # (works for phrasing like "compared with their projection")
+    # ------------------------------------------------------------------
+    q_text = (spec.get("_question_text") or "").lower()
+
+    if aggregation != "projection_vs_actual":
+        has_projection_word = any(
+            w in q_text
+            for w in ["projection", "projections", "forecast", "projected", "budget"]
+        )
+        has_compare_word = any(
+            w in q_text
+            for w in ["compare", "compared", "vs", "versus", "difference", "delta", "gap", "variance"]
+        )
+
+        if has_projection_word and has_compare_word:
+            aggregation = "projection_vs_actual"
+            spec["aggregation"] = aggregation
+
+    # ------------------------------------------------------------------
     # COMPARE MODE (entity or time comparison)
     # ------------------------------------------------------------------
     if aggregation == "compare":
         compare = spec.get("compare") or {}
         entities = compare.get("entities")
         entity_type = compare.get("entity_type")
+
 
         # --------------------------------------------------------------
         # 1) ENTITY-TO-ENTITY COMPARISON
