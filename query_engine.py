@@ -2545,9 +2545,7 @@ def answer_question_from_df(
             )
             core_answer = header + preview_md
 
-    # ------------------------------------------------------------------
-    # GROWTH RATE
-    # ------------------------------------------------------------------
+    # GROWTH RATE (formatting only – all logic is inside _run_aggregation)
     elif aggregation == "growth_rate":
         if group_df is None:
             # Single global growth number
