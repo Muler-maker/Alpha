@@ -1956,16 +1956,39 @@ def _run_aggregation(
         if not proj_col or proj_col not in df_filtered.columns:
             return None, float("nan")
 
+        # Define the natural grain of projections to avoid double-counting
+        proj_keys = [
+            c
+            for c in [
+                "Year",
+                "ProjWeek",  # from projection merge
+                "Week number for Activity vs Projection",
+                "Distributor",
+            ]
+            if c in df_filtered.columns
+        ]
+
+        # Base for actuals (we can safely sum over all rows)
+        df_actual = df_filtered
+
+        # Base for projections: drop duplicates on projection grain
+        if proj_keys:
+            df_proj = df_filtered.drop_duplicates(subset=proj_keys)
+        else:
+            df_proj = df_filtered
+
         if group_cols:
+            # --- Grouped actuals ---
             grp_actual = (
-                df_filtered
+                df_actual
                 .groupby(group_cols, as_index=False)[actual_col]
                 .sum()
                 .rename(columns={actual_col: "Actual_mCi"})
             )
 
+            # --- Grouped projections (from deduped frame) ---
             grp_proj = (
-                df_filtered
+                df_proj
                 .groupby(group_cols, as_index=False)[proj_col]
                 .sum()
                 .rename(columns={proj_col: "Projected_mCi"})
@@ -1973,10 +1996,16 @@ def _run_aggregation(
 
             merged = pd.merge(grp_actual, grp_proj, on=group_cols, how="outer")
         else:
-            merged = pd.DataFrame({
-                "Actual_mCi": [float(df_filtered[actual_col].sum())],
-                "Projected_mCi": [float(df_filtered[proj_col].sum())],
-            })
+            # --- Single global numbers ---
+            actual_total = float(df_actual[actual_col].sum())
+            projected_total = float(df_proj[proj_col].sum())
+
+            merged = pd.DataFrame(
+                {
+                    "Actual_mCi": [actual_total],
+                    "Projected_mCi": [projected_total],
+                }
+            )
 
         merged["Actual_mCi"] = merged["Actual_mCi"].fillna(0.0)
         merged["Projected_mCi"] = merged["Projected_mCi"].fillna(0.0)
