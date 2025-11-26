@@ -1225,6 +1225,21 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
             # Explicit list of statuses
             result = result[result[ship_col].isin(spec["shipping_status_list"])]
 
+        elif ship_mode == "all":
+            # Do NOT filter by status – keep everything
+            pass
+
+    # --- Dynamic week window (last N weeks logic) ---
+    time_window = spec.get("time_window") or {}
+    if time_window.get("mode"):
+        result = _apply_time_window(result, spec)
+    # --------------------
+    # DYNAMIC WEEK WINDOW
+    # --------------------
+    time_window = spec.get("time_window") or {}
+    if time_window.get("mode"):
+        result = _apply_time_window(result, spec)
+
     return result
 
 
