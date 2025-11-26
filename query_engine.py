@@ -1574,10 +1574,11 @@ def _build_metadata_snippet(df_filtered: pd.DataFrame, spec: Dict[str, Any]) -> 
         ]
         ship_col = None
         for c in df_filtered.columns:
-            lc = c.lower().replace(" ", "")
+            lc = str(c).lower().replace(" ", "")
             if lc in ("shippingstatus", "shipping_status"):
                 ship_col = c
                 break
+
         if ship_col is not None:
             df_for_metadata = df_filtered[df_filtered[ship_col].isin(cancel_status_values)]
             if df_for_metadata.empty:
