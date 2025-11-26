@@ -2694,5 +2694,3 @@ def _apply_time_window(df: pd.DataFrame, filters: Dict[str, Any]) -> pd.DataFram
     ]
 
     return df_filtered
-
-
