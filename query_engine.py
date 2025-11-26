@@ -582,17 +582,14 @@ ALWAYS:
     spec = _augment_spec_with_date_heuristics(question, spec)
 
     # 🔧 Extra post-processing for patterns that the LLM often misses
-
     q_lower = (question or "").lower()
-        # If the question includes "per year", "by year" etc., make sure we include "year" in group_by
-    if any(t in q_lower for t in ["per year", "by year", "yearly", "each year"]):
-        gb = spec.get("group_by") or []
-        if "year" not in gb:
-            gb = gb + ["year"]
-        spec["group_by"] = gb
 
+    # Always keep the raw question text for downstream helpers (products, metadata, etc.)
+    spec["_question_text"] = question
 
-    # --- Distributor compare: DSD vs PI Medical ---
+    # -------------------------------
+    # Distributor compare: DSD vs PI Medical
+    # -------------------------------
     if "compare" in q_lower and "dsd" in q_lower and "pi medical" in q_lower:
         spec["aggregation"] = "compare"
         compare = spec.get("compare") or {}
@@ -600,11 +597,9 @@ ALWAYS:
         compare["entity_type"] = "distributor"
         spec["compare"] = compare
 
-        # Start from whatever the LLM already decided
         gb = spec.get("group_by") or []
 
         # If the user asked "per year / by year / yearly / each year / in years"
-        # make sure 'year' is included as a grouping dimension
         if any(t in q_lower for t in ["per year", "by year", "yearly", "each year", "in years"]):
             if "year" not in gb:
                 gb.append("year")
@@ -615,13 +610,9 @@ ALWAYS:
 
         spec["group_by"] = gb
 
-    # Be careful: "ca" is a substring of "nca", so only treat CA as present
-    # when it appears as a separate token.
-    has_nca = "nca" in q_lower
-    ca_token_patterns = [" ca ", " ca,", " ca.", " ca?", " ca!"]
-    has_ca_token = any(p in q_lower for p in ca_token_patterns)
-
-    # --- Product compare: CA vs NCA ---
+    # -------------------------------
+    # Product compare: CA vs NCA
+    # -------------------------------
     if "compare" in q_lower and "ca" in q_lower and "nca" in q_lower:
         spec["aggregation"] = "compare"
         compare = spec.get("compare") or {}
@@ -642,28 +633,18 @@ ALWAYS:
 
         spec["group_by"] = gb
 
-    # --- Product compare: CA vs NCA ---
-    if "compare" in q_lower and "ca" in q_lower and "nca" in q_lower:
-        ...
-        spec["group_by"] = gb
-    # Flag "why / reason / drop" style questions so we know to use metadata
-    spec["_question_text"] = question
-    why_keywords = ["why", "reason", "cause", "drop", "decline", "decrease", "went down"]
-    spec["_why_question"] = any(k in q_lower for k in why_keywords)
+    # -------------------------------
+    # Mark "why / reason / drop" style questions so we know to use metadata
+    # -------------------------------
+    why_keywords = ["why", "reason", "reasons", "cause", "drop", "decline", "decrease", "went down"]
+    is_why = any(k in q_lower for k in why_keywords)
 
-    # 🔒 Global safety net: if the user clearly asked for "per year"
-    # but the LLM forgot to include 'year' in group_by, add it.
-    if any(t in q_lower for t in ["per year", "by year", "yearly", "each year", "in years"]):
-        gb = spec.get("group_by") or []
-        if "year" not in gb:
-            gb.append("year")
-        spec["group_by"] = gb
-    # ✅ Mark "why" questions + capture year/week if already set by the LLM
-    q_stripped = (question or "").strip().lower()
-    if q_stripped.startswith("why"):
+    if is_why:
         spec["_why_question"] = True
         filters = spec.get("filters") or {}
-        spec["filters"] = filters  # keep attached
+        spec["filters"] = filters  # ensure attached
+
+        # Capture year/week if LLM has already set them
         if filters.get("year"):
             try:
                 spec["_why_year"] = int(filters["year"])
@@ -673,9 +654,36 @@ ALWAYS:
             try:
                 spec["_why_week"] = int(filters["week"])
             except Exception:
-                pass       
-    return spec
+                pass
 
+        # 🧹 Fix awkward "all statuses" + shipping-status breakdowns
+        # For "why did it drop" we almost always care about normal shipped volume.
+
+        # 1) If the model set `shipping_status_mode = "all"`, force it back to "countable"
+        if spec.get("shipping_status_mode") == "all":
+            spec["shipping_status_mode"] = "countable"
+            spec["shipping_status_list"] = []
+
+        # 2) If group_by focuses on ShippingStatus only, drop it
+        gb = spec.get("group_by") or []
+        if gb == ["shipping_status"]:
+            gb = []
+        elif "shipping_status" in gb and len(gb) > 1:
+            # remove shipping_status from multi-dim breakdowns for why-questions
+            gb = [g for g in gb if g != "shipping_status"]
+        spec["group_by"] = gb
+
+    # -------------------------------
+    # Global safety net: "per year" wording
+    # -------------------------------
+    if any(t in q_lower for t in ["per year", "by year", "yearly", "each year", "in years"]):
+        gb = spec.get("group_by") or []
+        if "year" not in gb:
+            gb.append("year")
+        spec["group_by"] = gb
+
+    return spec
+   
 def _interpret_question_fallback(
     question: str,
     history: Optional[List[Dict[str, str]]] = None,
