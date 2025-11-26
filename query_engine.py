@@ -2134,18 +2134,25 @@ def answer_question_from_df(
         if "Year" in consolidated_df.columns and not consolidated_df["Year"].dropna().empty:
             filters["year"] = int(consolidated_df["Year"].max())
 
-    spec["_question_text"] = question
-        
-    try:
-        spec = _normalize_product_filters(spec, question)
-    except NameError:
-        # If helper not present, just skip
-        pass
-
     spec = _force_cancellation_status_from_text(question, spec)
     spec = _ensure_all_statuses_when_grouped(spec)
     spec = _inject_customer_from_question(consolidated_df, spec)
     spec = _disambiguate_customer_vs_distributor(consolidated_df, spec)
+    # 🔧 Final fix for "why / reason / drop" style questions:
+    # make sure we use normal shipped volume and NOT a shipping-status breakdown.
+    if spec.get("_why_question"):
+        # 1) Force countable statuses if LLM / helpers set "all"
+        if spec.get("shipping_status_mode") in (None, "all"):
+            spec["shipping_status_mode"] = "countable"
+            spec["shipping_status_list"] = []
+
+        # 2) Remove shipping_status from group_by for explanation questions
+        gb = spec.get("group_by") or []
+        if gb == ["shipping_status"]:
+            gb = []
+        elif "shipping_status" in gb and len(gb) > 1:
+            gb = [g for g in gb if g != "shipping_status"]
+        spec["group_by"] = gb
 
     # 2) Apply filters & run aggregation
     df_filtered = _apply_filters(consolidated_df, spec)
