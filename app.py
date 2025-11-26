@@ -16,6 +16,43 @@ from data_loader import (
 )
 from consolidated import build_consolidated_df
 from query_engine import answer_question_from_df
+import os
+import io
+import json
+import pandas as pd
+import streamlit as st
+from dotenv import load_dotenv
+from openai import OpenAI
+from PIL import Image
+pd.options.display.float_format = "{:,.0f}".format
+from charts import render_chart_from_answer, strip_chart_blocks
+from data_loader import (
+    load_orders,
+    load_projection,
+    load_metadata,
+    preprocess_orders,
+)
+from consolidated import build_consolidated_df
+from query_engine import answer_question_from_df
+
+
+UI_TEXT = {
+    # Data loading
+    "loading_data": "Loading latest data from Google Sheets…",
+
+    # Auth
+    "password_label": "Password",
+    "password_placeholder": "Enter password",
+    "password_error": "Incorrect password.",
+
+    # Chat input
+    "chat_label": "Ask a question",
+    "chat_placeholder": "What would you like Alpha to explore?",
+
+    # Downloads
+    "download_csv": "💾 Download chat (CSV)",
+    "download_xlsx": "📊 Download chat (Excel)",
+}
 
 
 # ================================
@@ -310,7 +347,7 @@ def load_data_if_needed():
     if ss.data_loaded:
         return
 
-    with st.spinner("Loading latest data from Google Sheets…"):
+    with st.spinner(UI_TEXT["loading_data"]):
         raw_orders = load_orders()
         orders_df = preprocess_orders(raw_orders)
         proj_df = load_projection()
@@ -350,9 +387,9 @@ def main():
         c1, c2, c3 = st.columns([1, 3, 1])
         with c2:
             pwd = st.text_input(
-                "Password",
+                UI_TEXT["password_label"],
                 type="password",
-                placeholder="Enter password",
+                placeholder=UI_TEXT["password_placeholder"],
                 label_visibility="collapsed",
             )
             if pwd:
@@ -360,7 +397,7 @@ def main():
                     st.session_state.authenticated = True
                     st.rerun()
                 else:
-                    st.error("Incorrect password.")
+                    st.error(UI_TEXT["password_error"])
         return
 
     # ---------- DATA ----------
@@ -389,7 +426,7 @@ def main():
             col_csv, col_xlsx = st.columns(2)
             with col_csv:
                 st.download_button(
-                    "💾 Download chat (CSV)",
+                    UI_TEXT["download_csv"],
                     data=csv_bytes,
                     file_name="alpha_chat.csv",
                     mime="text/csv",
@@ -402,7 +439,7 @@ def main():
                 export_df.to_excel(writer, index=False, sheet_name="Chat")
             with col_xlsx:
                 st.download_button(
-                    "📊 Download chat (Excel)",
+                    UI_TEXT["download_xlsx"],
                     data=buf.getvalue(),
                     file_name="alpha_chat.xlsx",
                     mime=(
@@ -453,10 +490,10 @@ def main():
         col_input, col_btn = st.columns([12, 1])
         with col_input:
             prompt = st.text_input(
-                "Ask a question",
+                UI_TEXT["chat_label"],
                 value="",
                 label_visibility="collapsed",
-                placeholder="What would you like Alpha to explore?",
+                placeholder=UI_TEXT["chat_placeholder"],
             )
         with col_btn:
             submitted = st.form_submit_button("➤")
