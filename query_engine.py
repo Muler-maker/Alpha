@@ -753,19 +753,23 @@ def _interpret_question_fallback(
 
     return spec
 
-
-
 def _augment_spec_with_date_heuristics(question: str, spec: Dict[str, Any]) -> Dict[str, Any]:
     """
     Post-process the spec from the LLM with simple regex/keyword rules
     to ensure year / month / quarter / half_year are filled when obvious
-    in the question text.
+    in the question text, and to enforce dynamic week windows when the
+    LLM forgets to set time_window (e.g. 'last 4 weeks').
     """
     q = (question or "").lower()
-    filters = spec.get("filters") or {}
-    spec["filters"] = filters  # ensure it's attached
+    spec = spec or {}
 
-    # --- YEAR ---
+    # Ensure filters exist
+    filters = spec.get("filters") or {}
+    spec["filters"] = filters
+
+    # -----------------------
+    # YEAR
+    # -----------------------
     if not filters.get("year"):
         m = re.search(r"\b(20[2-3][0-9])\b", q)
         if m:
@@ -774,7 +778,9 @@ def _augment_spec_with_date_heuristics(question: str, spec: Dict[str, Any]) -> D
             except ValueError:
                 pass
 
-    # --- MONTH ---
+    # -----------------------
+    # MONTH
+    # -----------------------
     if not filters.get("month"):
         month_map = {
             "january": 1, "jan": 1,
@@ -795,7 +801,9 @@ def _augment_spec_with_date_heuristics(question: str, spec: Dict[str, Any]) -> D
                 filters["month"] = num
                 break
 
-    # --- QUARTER ---
+    # -----------------------
+    # QUARTER
+    # -----------------------
     if not filters.get("quarter"):
         m = re.search(r"\bq([1-4])\b", q)
         if m:
@@ -816,7 +824,9 @@ def _augment_spec_with_date_heuristics(question: str, spec: Dict[str, Any]) -> D
                     filters["quarter"] = qval
                     break
 
-    # --- HALF-YEAR ---
+    # -----------------------
+    # HALF-YEAR
+    # -----------------------
     if not filters.get("half_year"):
         m = re.search(r"\bh([12])\b", q)
         if m:
@@ -827,6 +837,74 @@ def _augment_spec_with_date_heuristics(question: str, spec: Dict[str, Any]) -> D
             elif "second half" in q or "2nd half" in q:
                 filters["half_year"] = "H2"
 
+    # -----------------------
+    # TIME WINDOW (dynamic weeks)
+    # -----------------------
+    tw = spec.get("time_window") or {
+        "mode": None,
+        "n_weeks": None,
+        "anchor": {"year": None, "week": None},
+    }
+    if "anchor" not in tw:
+        tw["anchor"] = {"year": None, "week": None}
+    if "year" not in tw["anchor"]:
+        tw["anchor"]["year"] = None
+    if "week" not in tw["anchor"]:
+        tw["anchor"]["week"] = None
+
+    # Only add our heuristics if LLM did NOT already set a mode
+    if not tw.get("mode"):
+        # --- last / past / previous / trailing / rolling N weeks ---
+        m_last_weeks = re.search(
+            r"(last|past|previous|trailing|rolling)\s+(\d+)\s+weeks?",
+            q,
+        )
+        if m_last_weeks:
+            n_weeks_str = m_last_weeks.group(2)
+            try:
+                n_weeks = int(n_weeks_str)
+                tw["mode"] = "last_n_weeks"
+                tw["n_weeks"] = n_weeks
+                tw["anchor"]["year"] = None
+                tw["anchor"]["week"] = None
+                # IMPORTANT: dynamic window → we must NOT also use filters.week
+                filters["week"] = None
+            except Exception:
+                pass
+
+    # Anchored window: "N weeks before week X [of YEAR]"
+    if not tw.get("mode"):
+        m_anchor = re.search(
+            r"(\d+)\s+weeks?\s+(?:before|leading up to)\s+week\s+(\d+)(?:\s+of\s+(20[2-3][0-9]))?",
+            q,
+        )
+        if m_anchor:
+            try:
+                n_weeks = int(m_anchor.group(1))
+                week_x = int(m_anchor.group(2))
+            except Exception:
+                n_weeks = None
+                week_x = None
+
+            if n_weeks is not None and week_x is not None:
+                tw["mode"] = "anchored_last_n_weeks"
+                tw["n_weeks"] = n_weeks
+                tw["anchor"]["week"] = week_x
+
+                year_str = m_anchor.group(3)
+                if year_str:
+                    try:
+                        year_val = int(year_str)
+                        tw["anchor"]["year"] = year_val
+                        filters["year"] = year_val
+                    except Exception:
+                        pass
+
+                # For anchored windows we also clear filters.week
+                filters["week"] = None
+
+    spec["filters"] = filters
+    spec["time_window"] = tw
     return spec
 
 
