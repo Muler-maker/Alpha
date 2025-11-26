@@ -2359,11 +2359,14 @@ def _build_chart_block(
     # Optional series field (color grouping)
     series_field = None
     if chart_type in ("line", "bar"):
+        # Work with lowercase *string* versions of the column names
+        lower_cols = [str(c).lower() for c in cols]
+        x_field_lower = str(x_field).lower() if x_field is not None else ""
+
         # e.g. if we grouped by both year and week, use year as series
-        x_field_lower = str(x_field).lower()  # 🔧 safe even if x_field is not a string
         if "year" in lower_cols and x_field_lower != "year":
             for c in cols:
-                if str(c).lower() == "year":  # 🔧 safe lower()
+                if str(c).lower() == "year":
                     series_field = c
                     break
 
