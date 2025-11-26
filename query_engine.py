@@ -2347,6 +2347,9 @@ def answer_question_from_df(
     # 1) Build & normalize the spec
     spec = _interpret_question_with_llm(question, history=history)
 
+    # 🔧 Make original question available to downstream logic (e.g. projection vs actual)
+    spec["_question_text"] = question or ""
+
     # 🔧 Ensure we have a year for "why" questions with an explicit week but no year
     filters = spec.get("filters") or {}
     spec["filters"] = filters  # keep attached to spec
@@ -2358,6 +2361,7 @@ def answer_question_from_df(
     spec = _ensure_all_statuses_when_grouped(spec)
     spec = _inject_customer_from_question(consolidated_df, spec)
     spec = _disambiguate_customer_vs_distributor(consolidated_df, spec)
+
     # 🔧 Final fix for "why / reason / drop" style questions:
     # make sure we use normal shipped volume and NOT a shipping-status breakdown.
     if spec.get("_why_question"):
@@ -2609,7 +2613,7 @@ def answer_question_from_df(
                 + preview_md
             )
 
-    # Fallback
+    # Fallback (includes projection_vs_actual, for now it will just show the table)
     else:
         if group_df is None:
             core_answer = (
@@ -2645,7 +2649,7 @@ def answer_question_from_df(
     if meta_block:
         final_answer += meta_block
 
-    # Chart block is appended so the frontend can detect ```chart ... ```
+    # Chart block is appended so the frontend can detect ```chart ... ``` 
     if chart_block:
         final_answer += "\n\n" + chart_block
 
