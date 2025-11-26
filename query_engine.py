@@ -1349,7 +1349,111 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
 
     return result
 
+def _calculate_yoy_growth(
+    df: pd.DataFrame,
+    spec: Dict[str, Any],
+    group_cols: List[str],
+    year_col: str,
+    total_col: str,
+) -> Tuple[pd.DataFrame, float]:
+    """
+    Calculate year-over-year growth for each entity (distributor, customer, etc.).
+    Returns a pivoted table with years as columns and growth rates as values.
+    """
+    if df is None or df.empty:
+        return None, float("nan")
+    
+    # Get non-year grouping dimensions (e.g., Distributor, Country, etc.)
+    entity_cols = [c for c in group_cols if c != year_col]
+    
+    if not entity_cols:
+        # No entity dimension, just years -> simple YoY table
+        yearly = df.groupby(year_col, as_index=False)[total_col].sum()
+        yearly = yearly.sort_values(year_col)
+        
+        # Calculate YoY growth
+        yearly["YoY_Growth"] = yearly[total_col].pct_change()
+        return yearly, float("nan")
+    
+    # Group by entity + year
+    grouped = df.groupby(entity_cols + [year_col], as_index=False)[total_col].sum()
+    
+    # Pivot: entities as rows, years as columns
+    pivot = grouped.pivot(index=entity_cols, columns=year_col, values=total_col)
+    pivot = pivot.fillna(0)
+    
+    # Calculate growth rates for each consecutive year pair
+    years = sorted(pivot.columns)
+    growth_cols = {}
+    
+    for i in range(1, len(years)):
+        prev_year = years[i-1]
+        curr_year = years[i]
+        col_name = f"{curr_year}_vs_{prev_year}_Growth"
+        
+        # Calculate growth rate
+        growth_cols[col_name] = pivot.apply(
+            lambda row: ((row[curr_year] - row[prev_year]) / row[prev_year] * 100) 
+            if row[prev_year] > 0 else float("nan"),
+            axis=1
+        )
+    
+    # Build final table: Entity | 2022 | 2023 | 2024 | 2025 | 2023_vs_2022 | 2024_vs_2023 | 2025_vs_2024
+    result = pivot.reset_index()
+    
+    for col_name, growth_series in growth_cols.items():
+        result[col_name] = growth_series.values
+    
+    # Format growth columns as percentages (rounded to 1 decimal)
+    for col in result.columns:
+        if "_Growth" in str(col):
+            result[col] = result[col].round(1)
+    
+    return result, float("nan")
 
+
+def _calculate_wow_growth(
+    df: pd.DataFrame,
+    spec: Dict[str, Any],
+    group_cols: List[str],
+    week_col: str,
+    total_col: str,
+) -> Tuple[pd.DataFrame, float]:
+    """
+    Calculate week-over-week growth for each entity.
+    """
+    if df is None or df.empty:
+        return None, float("nan")
+    
+    entity_cols = [c for c in group_cols if c != week_col]
+    
+    if not entity_cols:
+        # Just weeks -> simple WoW table
+        weekly = df.groupby(week_col, as_index=False)[total_col].sum()
+        weekly = weekly.sort_values(week_col)
+        weekly["WoW_Growth"] = weekly[total_col].pct_change() * 100
+        weekly["WoW_Growth"] = weekly["WoW_Growth"].round(1)
+        return weekly, float("nan")
+    
+    # Group by entity + week
+    grouped = df.groupby(entity_cols + [week_col], as_index=False)[total_col].sum()
+    
+    # For each entity, calculate week-over-week growth
+    result_rows = []
+    
+    for entity_vals in grouped[entity_cols].drop_duplicates().values:
+        entity_filter = True
+        for i, col in enumerate(entity_cols):
+            entity_filter &= (grouped[col] == entity_vals[i])
+        
+        entity_data = grouped[entity_filter].sort_values(week_col)
+        entity_data["WoW_Growth"] = entity_data[total_col].pct_change() * 100
+        result_rows.append(entity_data)
+    
+    result = pd.concat(result_rows, ignore_index=True)
+    result["WoW_Growth"] = result["WoW_Growth"].round(1)
+    
+    return result, float("nan")
 # =========================
 # Metadata relevance config
 # =========================
@@ -1834,105 +1938,120 @@ def _run_aggregation(
     # ------------------------------------------------------------------
     # GROWTH RATE
     # ------------------------------------------------------------------
-    if aggregation == "growth_rate":
-        if full_df is None or not isinstance(full_df, pd.DataFrame):
+    # GROWTH RATE
+elif aggregation == "growth_rate":
+    if full_df is None or not isinstance(full_df, pd.DataFrame):
+        return None, float("nan")
+
+    compare = spec.get("compare") or {}
+    period_a = compare.get("period_a") or {}
+    period_b = compare.get("period_b") or {}
+
+    time_keys = ["year", "week", "month", "quarter", "half_year"]
+
+    # 🔧 NEW: Auto-detect year-over-year growth when no periods specified
+    if not period_a and not period_b and group_cols:
+        # Check if we're grouping by year
+        year_col = mapping.get("year")
+        if year_col and year_col in group_cols:
+            # Year-over-year growth: calculate growth for each year vs previous year
+            return _calculate_yoy_growth(df_filtered, spec, group_cols, year_col, total_col)
+        
+        # Check if we're grouping by week
+        week_col = mapping.get("week")
+        if week_col and week_col in group_cols:
+            # Week-over-week growth
+            return _calculate_wow_growth(df_filtered, spec, group_cols, week_col, total_col)
+
+    def _df_for_period(period_filters: Dict[str, Any]) -> pd.DataFrame:
+        temp_spec = copy.deepcopy(spec)
+        f = temp_spec.get("filters", {}) or {}
+        for key in time_keys:
+            f[key] = period_filters.get(key)
+        temp_spec["filters"] = f
+        return _apply_filters(full_df, temp_spec)
+
+    # --- No grouping: single global growth number
+    if not group_cols:
+        def _sum_for_period(period_filters: Dict[str, Any]) -> float:
+            df_p = _df_for_period(period_filters)
+            if df_p is None or df_p.empty or total_col not in df_p.columns:
+                return 0.0
+            return float(df_p[total_col].sum())
+
+        sum_a = _sum_for_period(period_a)
+        sum_b = _sum_for_period(period_b)
+
+        spec["_growth_debug"] = {"period_a_sum": sum_a, "period_b_sum": sum_b}
+
+        if sum_a == 0:
             return None, float("nan")
 
-        compare = spec.get("compare") or {}
-        period_a = compare.get("period_a") or {}
-        period_b = compare.get("period_b") or {}
+        growth = (sum_b - sum_a) / sum_a
+        return None, float(growth)
 
-        time_keys = ["year", "week", "month", "quarter", "half_year"]
+    # --- Grouped growth by the chosen dimensions
+    df_a = _df_for_period(period_a)
+    df_b = _df_for_period(period_b)
 
-        def _df_for_period(period_filters: Dict[str, Any]) -> pd.DataFrame:
-            temp_spec = copy.deepcopy(spec)
-            f = temp_spec.get("filters", {}) or {}
-            for key in time_keys:
-                f[key] = period_filters.get(key)
-            temp_spec["filters"] = f
-            return _apply_filters(full_df, temp_spec)
+    if df_a is not None and not df_a.empty and total_col in df_a.columns:
+        grp_a = df_a.groupby(group_cols, as_index=False)[total_col].sum()
+        grp_a = grp_a.rename(columns={total_col: "PeriodA_mCi"})
+    else:
+        grp_a = pd.DataFrame(columns=group_cols + ["PeriodA_mCi"])
 
-        # --- No grouping: single global growth number
-        if not group_cols:
-            def _sum_for_period(period_filters: Dict[str, Any]) -> float:
-                df_p = _df_for_period(period_filters)
-                if df_p is None or df_p.empty or total_col not in df_p.columns:
-                    return 0.0
-                return float(df_p[total_col].sum())
+    if df_b is not None and not df_b.empty and total_col in df_b.columns:
+        grp_b = df_b.groupby(group_cols, as_index=False)[total_col].sum()
+        grp_b = grp_b.rename(columns={total_col: "PeriodB_mCi"})
+    else:
+        grp_b = pd.DataFrame(columns=group_cols + ["PeriodB_mCi"])
 
-            sum_a = _sum_for_period(period_a)
-            sum_b = _sum_for_period(period_b)
+    merged = pd.merge(grp_a, grp_b, on=group_cols, how="outer")
+    if merged.empty:
+        spec["_growth_debug"] = {"period_a_sum": 0.0, "period_b_sum": 0.0}
+        return merged, float("nan")
 
-            spec["_growth_debug"] = {"period_a_sum": sum_a, "period_b_sum": sum_b}
+    merged["PeriodA_mCi"] = merged["PeriodA_mCi"].fillna(0.0)
+    merged["PeriodB_mCi"] = merged["PeriodB_mCi"].fillna(0.0)
 
-            if sum_a == 0:
-                return None, float("nan")
+    def _compute_growth_row(row: pd.Series) -> float:
+        a = float(row["PeriodA_mCi"])
+        b = float(row["PeriodB_mCi"])
+        if a == 0 and b == 0:
+            return 0.0
+        if a == 0 and b > 0:
+            return float("nan")
+        return (b - a) / a
 
-            growth = (sum_b - sum_a) / sum_a
-            return None, float(growth)
+    def _compute_status_row(row: pd.Series) -> str:
+        a = float(row["PeriodA_mCi"])
+        b = float(row["PeriodB_mCi"])
+        if a == 0 and b == 0:
+            return "no activity"
+        if a == 0 and b > 0:
+            return "new"
+        if a > 0 and b == 0:
+            return "stopped"
+        if b > a:
+            return "increase"
+        if b < a:
+            return "decrease"
+        return "no change"
 
-        # --- Grouped growth by the chosen dimensions
-        df_a = _df_for_period(period_a)
-        df_b = _df_for_period(period_b)
+    merged["AbsChange_mCi"] = merged["PeriodB_mCi"] - merged["PeriodA_mCi"]
+    merged["GrowthRate"] = merged.apply(_compute_growth_row, axis=1)
+    merged["Status"] = merged.apply(_compute_status_row, axis=1)
 
-        if df_a is not None and not df_a.empty and total_col in df_a.columns:
-            grp_a = df_a.groupby(group_cols, as_index=False)[total_col].sum()
-            grp_a = grp_a.rename(columns={total_col: "PeriodA_mCi"})
-        else:
-            grp_a = pd.DataFrame(columns=group_cols + ["PeriodA_mCi"])
+    total_a = float(merged["PeriodA_mCi"].sum())
+    total_b = float(merged["PeriodB_mCi"].sum())
+    spec["_growth_debug"] = {"period_a_sum": total_a, "period_b_sum": total_b}
 
-        if df_b is not None and not df_b.empty and total_col in df_b.columns:
-            grp_b = df_b.groupby(group_cols, as_index=False)[total_col].sum()
-            grp_b = grp_b.rename(columns={total_col: "PeriodB_mCi"})
-        else:
-            grp_b = pd.DataFrame(columns=group_cols + ["PeriodB_mCi"])
+    if total_a == 0:
+        overall_growth = float("nan")
+    else:
+        overall_growth = (total_b - total_a) / total_a
 
-        merged = pd.merge(grp_a, grp_b, on=group_cols, how="outer")
-        if merged.empty:
-            spec["_growth_debug"] = {"period_a_sum": 0.0, "period_b_sum": 0.0}
-            return merged, float("nan")
-
-        merged["PeriodA_mCi"] = merged["PeriodA_mCi"].fillna(0.0)
-        merged["PeriodB_mCi"] = merged["PeriodB_mCi"].fillna(0.0)
-
-        def _compute_growth_row(row: pd.Series) -> float:
-            a = float(row["PeriodA_mCi"])
-            b = float(row["PeriodB_mCi"])
-            if a == 0 and b == 0:
-                return 0.0
-            if a == 0 and b > 0:
-                return float("nan")
-            return (b - a) / a
-
-        def _compute_status_row(row: pd.Series) -> str:
-            a = float(row["PeriodA_mCi"])
-            b = float(row["PeriodB_mCi"])
-            if a == 0 and b == 0:
-                return "no activity"
-            if a == 0 and b > 0:
-                return "new"
-            if a > 0 and b == 0:
-                return "stopped"
-            if b > a:
-                return "increase"
-            if b < a:
-                return "decrease"
-            return "no change"
-
-        merged["AbsChange_mCi"] = merged["PeriodB_mCi"] - merged["PeriodA_mCi"]
-        merged["GrowthRate"] = merged.apply(_compute_growth_row, axis=1)
-        merged["Status"] = merged.apply(_compute_status_row, axis=1)
-
-        total_a = float(merged["PeriodA_mCi"].sum())
-        total_b = float(merged["PeriodB_mCi"].sum())
-        spec["_growth_debug"] = {"period_a_sum": total_a, "period_b_sum": total_b}
-
-        if total_a == 0:
-            overall_growth = float("nan")
-        else:
-            overall_growth = (total_b - total_a) / total_a
-
-        return merged, overall_growth
+    return merged, overall_growth
 
     # ------------------------------------------------------------------
     # Fallback: treat as sum
