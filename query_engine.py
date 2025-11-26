@@ -1711,11 +1711,12 @@ def _run_aggregation(
     Run the specified aggregation (sum, average, share_of_total, growth_rate)
     on the filtered data.
 
-    Now supports group-level:
+    Now supports:
       - average_mci (per group + overall)
       - share_of_total (per group, within current filters)
       - growth_rate (per group, between period A and B)
       - compare (entity-to-entity or time-to-time comparison)
+      - projection_vs_actual (actual vs forecast)
     """
     if df_filtered is None or not isinstance(df_filtered, pd.DataFrame) or df_filtered.empty:
         return None, float("nan")
@@ -1730,7 +1731,7 @@ def _run_aggregation(
 
     # --- Projection metric detection ---
     # If the question text mentions projection/forecast, and we have Proj_Amount,
-    # switch the metric to use projections instead of actuals.
+    # switch the metric to use projections instead of actuals for normal aggregations.
     question_text = (spec.get("_question_text") or "").lower()
     proj_col = mapping.get("proj_mci")
 
@@ -1797,7 +1798,11 @@ def _run_aggregation(
                 for g in group_by
                 if g != entity_type and mapping.get(g)
             ]
-            group_cols_with_entity = ["_CompareEntity"] + extra_group_cols if extra_group_cols else ["_CompareEntity"]
+            group_cols_with_entity = (
+                ["_CompareEntity"] + extra_group_cols
+                if extra_group_cols
+                else ["_CompareEntity"]
+            )
 
             grouped_df = df_compare.groupby(group_cols_with_entity, as_index=False)[total_col].sum()
             grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
@@ -1917,54 +1922,55 @@ def _run_aggregation(
 
         total_mci = float(df_filtered[total_col].sum())
         return None, total_mci
-# ------------------------------------------------------------------
-# PROJECTION VS ACTUAL
-# ------------------------------------------------------------------
-if aggregation == "projection_vs_actual":
-    actual_col = mapping.get("total_mci")
-    proj_col = mapping.get("proj_mci")
 
-    if not actual_col or actual_col not in df_filtered.columns:
-        return None, float("nan")
-    if not proj_col or proj_col not in df_filtered.columns:
-        return None, float("nan")
+    # ------------------------------------------------------------------
+    # PROJECTION VS ACTUAL
+    # ------------------------------------------------------------------
+    if aggregation == "projection_vs_actual":
+        actual_col = mapping.get("total_mci")
+        proj_col = mapping.get("proj_mci")
 
-    if group_cols:
-        grp_actual = (
-            df_filtered
-            .groupby(group_cols, as_index=False)[actual_col]
-            .sum()
-            .rename(columns={actual_col: "Actual_mCi"})
+        if not actual_col or actual_col not in df_filtered.columns:
+            return None, float("nan")
+        if not proj_col or proj_col not in df_filtered.columns:
+            return None, float("nan")
+
+        if group_cols:
+            grp_actual = (
+                df_filtered
+                .groupby(group_cols, as_index=False)[actual_col]
+                .sum()
+                .rename(columns={actual_col: "Actual_mCi"})
+            )
+
+            grp_proj = (
+                df_filtered
+                .groupby(group_cols, as_index=False)[proj_col]
+                .sum()
+                .rename(columns={proj_col: "Projected_mCi"})
+            )
+
+            merged = pd.merge(grp_actual, grp_proj, on=group_cols, how="outer")
+        else:
+            merged = pd.DataFrame({
+                "Actual_mCi": [float(df_filtered[actual_col].sum())],
+                "Projected_mCi": [float(df_filtered[proj_col].sum())],
+            })
+
+        merged["Actual_mCi"] = merged["Actual_mCi"].fillna(0.0)
+        merged["Projected_mCi"] = merged["Projected_mCi"].fillna(0.0)
+
+        merged["Delta_mCi"] = merged["Actual_mCi"] - merged["Projected_mCi"]
+
+        merged["DeltaPct"] = merged.apply(
+            lambda r: (r["Delta_mCi"] / r["Projected_mCi"] * 100.0)
+            if r["Projected_mCi"] not in (0, 0.0)
+            else float("nan"),
+            axis=1,
         )
 
-        grp_proj = (
-            df_filtered
-            .groupby(group_cols, as_index=False)[proj_col]
-            .sum()
-            .rename(columns={proj_col: "Projected_mCi"})
-        )
-
-        merged = pd.merge(grp_actual, grp_proj, on=group_cols, how="outer")
-    else:
-        merged = pd.DataFrame({
-            "Actual_mCi": [float(df_filtered[actual_col].sum())],
-            "Projected_mCi": [float(df_filtered[proj_col].sum())],
-        })
-
-    merged["Actual_mCi"] = merged["Actual_mCi"].fillna(0.0)
-    merged["Projected_mCi"] = merged["Projected_mCi"].fillna(0.0)
-
-    merged["Delta_mCi"] = merged["Actual_mCi"] - merged["Projected_mCi"]
-
-    merged["DeltaPct"] = merged.apply(
-        lambda r: (r["Delta_mCi"] / r["Projected_mCi"] * 100.0)
-        if r["Projected_mCi"] not in (0, 0.0)
-        else float("nan"),
-        axis=1,
-    )
-
-    total_actual = float(merged["Actual_mCi"].sum())
-    return merged, total_actual
+        total_actual = float(merged["Actual_mCi"].sum())
+        return merged, total_actual
 
     # ------------------------------------------------------------------
     # SUM (default)
@@ -2155,16 +2161,6 @@ if aggregation == "projection_vs_actual":
         grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
         return grouped_df, total_mci
 
-    return None, total_mci
-
-    # ------------------------------------------------------------------
-    # Fallback: treat as sum
-    # ------------------------------------------------------------------
-    total_mci = float(df_filtered[total_col].sum())
-    if group_cols:
-        grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
-        grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
-        return grouped_df, total_mci
     return None, total_mci
 
 def _build_chart_block(
