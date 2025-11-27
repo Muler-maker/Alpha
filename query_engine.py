@@ -47,7 +47,7 @@ FIELD_CANDIDATES = {
     "customer": ["The customer", "Customer", "Company name"],
 
     # Unique order quantity (actuals)
-    "total_mci": ["Total_mCi", "Total amount ordered (mCi)"],
+    "total_mci": ["Total_mCi"],
 
     # Projection quantity (from Projections sheet, joined in consolidated.py)
     "proj_mci": ["Proj_Amount"],
@@ -2582,8 +2582,8 @@ def answer_question_from_df(
     # If we DO have a table (group_df), it's OK for numeric_value to be NaN.
     if group_df is None and (numeric_value is None or pd.isna(numeric_value)):
         return (
-            "I couldn't locate the 'Total amount ordered (mCi)' column or compute the requested metric, "
-            "so I can't calculate a numeric answer."
+            "I couldn't compute the requested metric because there was no valid data "
+        "or the base period had zero activity."
         )
 
     # 8) Build the core textual answer by aggregation type
