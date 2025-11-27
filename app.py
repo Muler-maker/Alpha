@@ -421,15 +421,19 @@ def main():
             role = msg.get("role", "assistant")
             content = msg.get("content", "")
 
+            # Choose avatar
             avatar = "🧪" if role == "user" else "☢️"
 
             with st.chat_message(role, avatar=avatar):
-                # Render text content
                 st.markdown(content)
 
-                # Render charts (if present)
+                # If this message has a chart block, render the chart(s)
                 if role == "assistant" and "raw_answer" in msg:
-                    render_chart_from_answer(msg["raw_answer"])
+                    charts = render_chart_from_answer(msg["raw_answer"])
+                    if charts:
+                        for chart in charts:
+                            st.altair_chart(chart, use_container_width=True)
+
 
 
         # Spacer so last message is above fixed footer
