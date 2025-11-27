@@ -1717,46 +1717,15 @@ def _run_aggregation(
     """
     Run the specified aggregation (sum, average, share_of_total, growth_rate)
     on the filtered data.
-
-    Now supports:
-      - average_mci (per group + overall)
-      - share_of_total (per group, within current filters)
-      - growth_rate (per group, between period A and B)
-      - compare (entity-to-entity or time-to-time comparison)
-      - projection_vs_actual (actual vs forecast)
     """
     if df_filtered is None or not isinstance(df_filtered, pd.DataFrame) or df_filtered.empty:
         return None, float("nan")
 
-    # Base DF for mapping + some aggregations
-    # Always use df_filtered for identifying column mappings
     base_df = df_filtered
     mapping = _get_mapping(base_df)
-
-    # Default metric: actual total mCi
     total_col = mapping.get("total_mci")
-
-    # --- Projection metric detection ---
-    # If the question text mentions projection/forecast, and we have Proj_Amount,
-    # switch the metric to use projections instead of actuals for normal aggregations.
-    question_text = (spec.get("_question_text") or "").lower()
-    proj_col = mapping.get("proj_mci")
-
-    has_projection_word = any(
-        w in question_text
-        for w in ["projection", "projections", "forecast", "projected", "budget"]
-    )
-
-    metric_mode = "actual"
-    if has_projection_word and proj_col and proj_col in base_df.columns:
-        metric_mode = "projection"
-        total_col = proj_col  # use Proj_Amount instead of actuals
-
-    # Store for debugging / later use if needed
-    spec["_metric_mode"] = metric_mode
-
+    
     if not total_col or total_col not in base_df.columns:
-        # If we genuinely can't find the metric column, bail out
         return None, float("nan")
 
     aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
@@ -1764,24 +1733,57 @@ def _run_aggregation(
     group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
 
     # ------------------------------------------------------------------
-    # Override aggregation if question clearly asks for projection vs actual
-    # (works for phrasing like "compared with their projection")
+    # GROWTH RATE - NOW ACTUALLY IMPLEMENTED
     # ------------------------------------------------------------------
-    q_text = (spec.get("_question_text") or "").lower()
-
-    if aggregation != "projection_vs_actual":
-        has_projection_word = any(
-            w in q_text
-            for w in ["projection", "projections", "forecast", "projected", "budget"]
-        )
-        has_compare_word = any(
-            w in q_text
-            for w in ["compare", "compared", "vs", "versus", "difference", "delta", "gap", "variance"]
-        )
-
-        if has_projection_word and has_compare_word:
-            aggregation = "projection_vs_actual"
-            spec["aggregation"] = aggregation
+    if aggregation == "growth_rate":
+        # Determine if this is week-over-week or year-over-year
+        time_window = spec.get("time_window") or {}
+        compare = spec.get("compare") or {}
+        
+        # Case 1: Dynamic week window (last N weeks, etc.) → WoW
+        if time_window.get("mode") in ("last_n_weeks", "anchored_last_n_weeks"):
+            if "Week" in base_df.columns:
+                # Group by week (and any other dimensions like product, distributor)
+                group_cols_wow = [mapping.get(field) for field in group_by 
+                                  if mapping.get(field) and field != "week"]
+                week_col = mapping.get("week")
+                
+                group_df, overall_val = _calculate_wow_growth(
+                    base_df, spec, group_cols, week_col, total_col
+                )
+                return group_df, overall_val
+        
+        # Case 2: Time-to-time comparison (period A vs B) → growth between periods
+        period_a = compare.get("period_a")
+        period_b = compare.get("period_b")
+        if period_a and period_b:
+            # This would need custom logic to compare two specific periods
+            # For now, if we have year comparison, use YoY
+            if "Year" in base_df.columns and ("year" in group_by or not group_by):
+                year_col = mapping.get("year")
+                group_df, overall_val = _calculate_yoy_growth(
+                    base_df, spec, group_cols, year_col, total_col
+                )
+                return group_df, overall_val
+        
+        # Case 3: Year-over-year (if Year in group_by) → YoY
+        if "year" in group_by and "Year" in base_df.columns:
+            year_col = mapping.get("year")
+            group_df, overall_val = _calculate_yoy_growth(
+                base_df, spec, group_cols, year_col, total_col
+            )
+            return group_df, overall_val
+        
+        # Case 4: Week-over-week (if Week in group_by) → WoW
+        if "week" in group_by and "Week" in base_df.columns:
+            week_col = mapping.get("week")
+            group_df, overall_val = _calculate_wow_growth(
+                base_df, spec, group_cols, week_col, total_col
+            )
+            return group_df, overall_val
+        
+        # Fallback: no growth calculation possible
+        return None, float("nan")
 
     # ------------------------------------------------------------------
     # COMPARE MODE (entity or time comparison)
@@ -1791,11 +1793,8 @@ def _run_aggregation(
         entities = compare.get("entities")
         entity_type = compare.get("entity_type")
 
-
-        # --------------------------------------------------------------
-        # 1) ENTITY-TO-ENTITY COMPARISON
-        #    e.g. DSD vs PI Medical, Germany vs Austria, etc.
-        # --------------------------------------------------------------
+        # ... rest of compare logic unchanged ...
+        
         if entities and entity_type and entity_type not in ("product_sold", "product_catalogue"):
             entity_col = mapping.get(entity_type)
             if not entity_col or entity_col not in df_filtered.columns:
@@ -1820,7 +1819,6 @@ def _run_aggregation(
 
             df_compare = pd.concat(rows, ignore_index=True)
 
-            # Build grouping: CompareEntity + any other dimension (except the entity itself)
             extra_group_cols = [
                 mapping[g]
                 for g in group_by
@@ -1837,10 +1835,7 @@ def _run_aggregation(
             total_mci = float(df_compare[total_col].sum())
             return grouped_df, total_mci
 
-        # --------------------------------------------------------------
-        # 2) PRODUCT COMPARISON (CA vs NCA, etc.) ON product_sold / product_catalogue
-        #    entities = ["CA", "NCA"], entity_type = "product_sold"
-        # --------------------------------------------------------------
+        # Product comparison
         if entities and entity_type in ("product_sold", "product_catalogue"):
             prod_col = (
                 mapping.get("product_sold")
@@ -1851,15 +1846,9 @@ def _run_aggregation(
                 return None, float("nan")
 
             def _product_subset(df: pd.DataFrame, label: str) -> pd.DataFrame:
-                """
-                Build a clean subset for "CA" or "NCA" from the product_sold / product_catalogue column.
-                Uses simple substring checks (regex=False) to avoid NCA leaking into CA.
-                """
                 label = str(label).lower()
                 series = df[prod_col].astype(str).str.lower()
 
-                # 1) Define NCA-like and CA-like patterns (string, not regex)
-                #    We always treat anything NCA-like as NCA, and *never* as CA.
                 nca_like = (
                     series.str.contains("n.c.a", regex=False)
                     | series.str.contains(" nca", regex=False)
@@ -1874,7 +1863,6 @@ def _run_aggregation(
                     | series.str.contains(" carrier added", regex=False)
                 )
 
-                # Terbium-like products are excluded from both buckets
                 terb_like = (
                     series.str.contains("terb", regex=False)
                     | series.str.contains("tb-161", regex=False)
@@ -1882,18 +1870,14 @@ def _run_aggregation(
                     | series.str.contains("161tb", regex=False)
                 )
 
-                # 2) NCA bucket (non-carrier-added lutetium, not terbium)
                 if label == "nca":
                     mask = nca_like & ~terb_like
                     return df[mask]
 
-                # 3) CA bucket (carrier-added lutetium, not NCA-like, not terbium)
                 if label == "ca":
-                    # CA-like, but explicitly *not* NCA-like
                     mask = ca_like_raw & ~nca_like & ~terb_like
                     return df[mask]
 
-                # 4) Generic fallback: plain substring match on label (ignore NaNs)
                 return df[series.str.contains(label, na=False)]
 
             rows: List[pd.DataFrame] = []
@@ -1910,7 +1894,6 @@ def _run_aggregation(
 
             df_compare = pd.concat(rows, ignore_index=True)
 
-            # 🔑 Grouping: CompareEntity + any requested dimensions (year, quarter, week, etc.)
             extra_group_cols = [
                 mapping[g]
                 for g in group_by
@@ -1929,19 +1912,12 @@ def _run_aggregation(
             total_mci = float(df_compare[total_col].sum())
             return grouped_df, total_mci
 
-        # --------------------------------------------------------------
-        # 3) TIME-TO-TIME COMPARISON (if period_a / period_b given)
-        #    We piggy-back on the growth_rate logic.
-        # --------------------------------------------------------------
         period_a = compare.get("period_a")
         period_b = compare.get("period_b")
         if period_a and period_b:
             spec["aggregation"] = "growth_rate"
             return _run_aggregation(df_filtered, spec, full_df)
 
-        # --------------------------------------------------------------
-        # 4) Fallback: behave like a grouped sum if no entities/periods
-        # --------------------------------------------------------------
         if group_cols:
             grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
             grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
@@ -1963,29 +1939,24 @@ def _run_aggregation(
         if not proj_col or proj_col not in df_filtered.columns:
             return None, float("nan")
 
-        # Define the natural grain of projections to avoid double-counting
         proj_keys = [
             c
             for c in [
                 "Year",
-                "ProjWeek",  # from projection merge
+                "ProjWeek",
                 "Week number for Activity vs Projection",
                 "Distributor",
             ]
             if c in df_filtered.columns
         ]
 
-        # Base for actuals (we can safely sum over all rows)
         df_actual = df_filtered
-
-        # Base for projections: drop duplicates on projection grain
         if proj_keys:
             df_proj = df_filtered.drop_duplicates(subset=proj_keys)
         else:
             df_proj = df_filtered
 
         if group_cols:
-            # --- Grouped actuals ---
             grp_actual = (
                 df_actual
                 .groupby(group_cols, as_index=False)[actual_col]
@@ -1993,7 +1964,6 @@ def _run_aggregation(
                 .rename(columns={actual_col: "Actual_mCi"})
             )
 
-            # --- Grouped projections (from deduped frame) ---
             grp_proj = (
                 df_proj
                 .groupby(group_cols, as_index=False)[proj_col]
@@ -2003,7 +1973,6 @@ def _run_aggregation(
 
             merged = pd.merge(grp_actual, grp_proj, on=group_cols, how="outer")
         else:
-            # --- Single global numbers ---
             actual_total = float(df_actual[actual_col].sum())
             projected_total = float(df_proj[proj_col].sum())
 
@@ -2016,9 +1985,7 @@ def _run_aggregation(
 
         merged["Actual_mCi"] = merged["Actual_mCi"].fillna(0.0)
         merged["Projected_mCi"] = merged["Projected_mCi"].fillna(0.0)
-
         merged["Delta_mCi"] = merged["Actual_mCi"] - merged["Projected_mCi"]
-
         merged["DeltaPct"] = merged.apply(
             lambda r: (r["Delta_mCi"] / r["Projected_mCi"] * 100.0)
             if r["Projected_mCi"] not in (0, 0.0)
@@ -2028,12 +1995,6 @@ def _run_aggregation(
 
         total_actual = float(merged["Actual_mCi"].sum())
         return merged, total_actual
-    # ------------------------------------------------------------------
-    # GROWTH RATE (delegated to WoW / YoY helpers)
-    # ------------------------------------------------------------------
-    if aggregation == "growth_rate":
-        # Ensure we always return a tuple even if growth was not computed
-        return None, float("nan")
 
     # ------------------------------------------------------------------
     # SUM (default)
@@ -2046,13 +2007,9 @@ def _run_aggregation(
             return grouped_df, total_mci
         return None, total_mci
 
-    # ✅ DEBUG GUARD — MUST NEVER HIT
-    raise RuntimeError("Growth aggregation fell through without return")
-
     # ------------------------------------------------------------------
     # AVERAGE
     # ------------------------------------------------------------------
-
     if aggregation == "average_mci":
         if not group_cols:
             avg_val = float(df_filtered[total_col].mean())
@@ -2085,7 +2042,6 @@ def _run_aggregation(
         base_spec = copy.deepcopy(spec)
         base_filters = base_spec.get("filters", {}) or {}
 
-        # Remove entity filters for denominator
         for k in ["customer", "distributor", "country", "region"]:
             base_filters[k] = None
         base_spec["filters"] = base_filters
