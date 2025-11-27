@@ -2038,9 +2038,13 @@ def _run_aggregation(
             return grouped_df, total_mci
         return None, total_mci
 
+    # ✅ DEBUG GUARD — MUST NEVER HIT
+    raise RuntimeError("Growth aggregation fell through without return")
+
     # ------------------------------------------------------------------
     # AVERAGE
     # ------------------------------------------------------------------
+
     if aggregation == "average_mci":
         if not group_cols:
             avg_val = float(df_filtered[total_col].mean())
