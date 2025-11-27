@@ -2220,40 +2220,59 @@ def _build_chart_block(
 ) -> Optional[str]:
     """Build a chart specification for Altair visualization."""
     import json
-
+    
     if group_df is None or group_df.empty:
         return None
-
-    cols = list(group_df.columns)
+    
+    # ---- Prepare data for charting ----
+    chart_data = group_df.copy()
+    cols = list(chart_data.columns)
+    
     if not cols:
         return None
-
+    
     group_by = spec.get("group_by") or []
     q_lower = (spec.get("_question_text") or "").lower()
-
+    
+    # ---- Special handling: combine Year + Week into a time identifier ----
+    if "Year" in chart_data.columns and "Week" in chart_data.columns:
+        # Create a combined "YearWeek" column for better X-axis display
+        chart_data["YearWeek"] = (
+            chart_data["Year"].astype(str) + "-W" + 
+            chart_data["Week"].astype(str).str.zfill(2)
+        )
+        # Remove the original Year column from the data we'll chart
+        # (keep Week if it's explicitly in group_by)
+        if "Year" not in group_by or len(group_by) > 1:
+            cols = [c for c in cols if c != "Year"]
+            cols.insert(0, "YearWeek")  # Put it first as the X-axis
+            chart_data = chart_data[cols + [c for c in chart_data.columns if c not in cols]]
+    
+    cols = list(chart_data.columns)
+    
     # ---- Determine chart type ----
     chart_type = "bar"  # default
     
-    if "line" in q_lower or "trend" in q_lower or "over time" in q_lower:
+    if "line" in q_lower or "trend" in q_lower or "over time" in q_lower or "week" in q_lower:
         chart_type = "line"
     elif "pie" in q_lower or "share" in q_lower or "percentage" in q_lower:
         chart_type = "pie"
-
+    
     # ---- Infer X and Y fields ----
-    # X field: first non-numeric column (category)
+    # X field: first non-numeric column (category/time)
     x_field = None
     for col in cols:
-        if not pd.api.types.is_numeric_dtype(group_df[col]):
+        if not pd.api.types.is_numeric_dtype(chart_data[col]):
             x_field = col
             break
     
     if x_field is None:
         x_field = cols[0]
-
+    
     # Y field: first numeric column (metric)
     y_field = None
     for col in cols:
-        if pd.api.types.is_numeric_dtype(group_df[col]):
+        if pd.api.types.is_numeric_dtype(chart_data[col]):
             y_field = col
             break
     
@@ -2262,20 +2281,16 @@ def _build_chart_block(
             y_field = cols[1]
         else:
             return None
-
+    
     # ---- Series field (for color grouping in bar/line charts) ----
     series_field = None
     if chart_type in ("line", "bar"):
-        # If we have Year column and X field is not Year, use Year as series
-        if "Year" in cols and x_field != "Year":
-            series_field = "Year"
-        # Otherwise, use first non-numeric, non-x column
-        elif len(cols) > 2:
-            for col in cols:
-                if col != x_field and col != y_field and not pd.api.types.is_numeric_dtype(group_df[col]):
-                    series_field = col
-                    break
-
+        # Use first non-numeric, non-x column as series
+        for col in cols:
+            if col != x_field and col != y_field and not pd.api.types.is_numeric_dtype(chart_data[col]):
+                series_field = col
+                break
+    
     # ---- Build chart spec ----
     spec_dict = {
         "type": chart_type,
@@ -2284,84 +2299,9 @@ def _build_chart_block(
         "seriesField": series_field,
         "aggregation": aggregation,
         "group_by": group_by,
-        "data": group_df.to_dict(orient="records"),
+        "data": chart_data.to_dict(orient="records"),
     }
-
-    return "```chart\n" + json.dumps(spec_dict, indent=2) + "\n```"
-def _build_chart_block(
-    group_df: pd.DataFrame,
-    spec: Dict[str, Any],
-    aggregation: str
-) -> Optional[str]:
-    """Build a chart specification for Altair visualization."""
-    import json
-
-    if group_df is None or group_df.empty:
-        return None
-
-    cols = list(group_df.columns)
-    if not cols:
-        return None
-
-    group_by = spec.get("group_by") or []
-    q_lower = (spec.get("_question_text") or "").lower()
-
-    # ---- Determine chart type ----
-    chart_type = "bar"  # default
     
-    if "line" in q_lower or "trend" in q_lower or "over time" in q_lower:
-        chart_type = "line"
-    elif "pie" in q_lower or "share" in q_lower or "percentage" in q_lower:
-        chart_type = "pie"
-
-    # ---- Infer X and Y fields ----
-    # X field: first non-numeric column (category)
-    x_field = None
-    for col in cols:
-        if not pd.api.types.is_numeric_dtype(group_df[col]):
-            x_field = col
-            break
-    
-    if x_field is None:
-        x_field = cols[0]
-
-    # Y field: first numeric column (metric)
-    y_field = None
-    for col in cols:
-        if pd.api.types.is_numeric_dtype(group_df[col]):
-            y_field = col
-            break
-    
-    if y_field is None:
-        if len(cols) > 1:
-            y_field = cols[1]
-        else:
-            return None
-
-    # ---- Series field (for color grouping in bar/line charts) ----
-    series_field = None
-    if chart_type in ("line", "bar"):
-        # If we have Year column and X field is not Year, use Year as series
-        if "Year" in cols and x_field != "Year":
-            series_field = "Year"
-        # Otherwise, use first non-numeric, non-x column
-        elif len(cols) > 2:
-            for col in cols:
-                if col != x_field and col != y_field and not pd.api.types.is_numeric_dtype(group_df[col]):
-                    series_field = col
-                    break
-
-    # ---- Build chart spec ----
-    spec_dict = {
-        "type": chart_type,
-        "xField": x_field,
-        "yField": y_field,
-        "seriesField": series_field,
-        "aggregation": aggregation,
-        "group_by": group_by,
-        "data": group_df.to_dict(orient="records"),
-    }
-
     return "```chart\n" + json.dumps(spec_dict, indent=2) + "\n```"
 
 # --------------------------------------------------------------------
