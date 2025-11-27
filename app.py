@@ -489,7 +489,7 @@ def main():
         # Store user message
         st.session_state.messages.append({"role": "user", "content": user_text})
 
-        # Generate answer
+        # 1) Generate core Alpha answer
         try:
             raw_answer = answer_question_from_df(
                 user_text,
@@ -499,23 +499,24 @@ def main():
         except Exception as e:
             raw_answer = f"An error occurred: {e}"
 
-        # ---------------------------------
-        # ✨ OPTIONAL GPT REFINEMENT LAYER
-        # ---------------------------------
+        # 2) Optional refinement with GPT (style only)
         refined_answer = raw_answer
 
-        if client is not None and not raw_answer.startswith("An error occurred:"):
+        if client is not None and not raw_answer.startswith("An error occurred"):
             try:
                 refinement_prompt = f"""
 You are Alpha, a senior data analyst.
 
-Refine the text below so that it:
-- sounds natural and non-robotic
-- preserves ALL numbers exactly
-- keeps tables in markdown
-- does NOT add or infer new data
+Rewrite the response below so that it:
+- sounds more natural and conversational (less robotic)
+- slightly varies the sentence structure and wording
+- preserves ALL numeric values exactly as they appear
+- preserves any markdown tables exactly (same rows/columns, same numbers)
+- does NOT add, remove or change any data or metrics
 
-Text:
+Respond with ONLY the refined markdown text.
+
+Original response:
 ---
 {raw_answer}
 ---
@@ -526,31 +527,35 @@ Text:
                     messages=[
                         {
                             "role": "system",
-                            "content": "You refine analytical outputs for business users.",
+                            "content": "You refine analytical outputs for business users without changing any numbers.",
                         },
                         {"role": "user", "content": refinement_prompt},
                     ],
-                    temperature=0.2,
+                    temperature=0.3,
                 )
 
+                # New, styled text
                 refined_answer = response.choices[0].message.content.strip()
 
             except Exception:
-                # If refinement fails, fall back to the original answer
+                # If refinement fails for any reason, fall back silently
                 refined_answer = raw_answer
 
-        # Strip chart blocks for the chat text (use refined text)
+        # 3) Strip chart blocks from what we show in the chat bubble
         cleaned = strip_chart_blocks(refined_answer)
 
-        # Store a single assistant message with both clean text and raw answer
+        # 4) Store assistant message
+        # - content: refined, chart-stripped text
+        # - raw_answer: original engine output (for chart parsing)
         st.session_state.messages.append({
             "role": "assistant",
-            "content": cleaned,        # what the user sees
-            "raw_answer": raw_answer,  # original engine output for charts
+            "content": cleaned,
+            "raw_answer": raw_answer,
         })
 
-        # Rerun so the updated chat (and charts) are rendered above
+        # 5) Rerun so the updated chat (and charts) are rendered above
         st.rerun()
+
 
 
 if __name__ == "__main__":
