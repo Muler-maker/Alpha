@@ -2852,7 +2852,23 @@ def answer_question_from_df(
             chart_block = _build_chart_block(group_df, spec, aggregation)
     except NameError:
         chart_block = None
-
+  # ========== DEBUG: Why no charts? ==========
+    print("\n" + "="*60)
+    print("DEBUG: Chart Generation Check")
+    print("="*60)
+    print(f"Question: {question}")
+    print(f"Aggregation: {aggregation}")
+    print(f"Group_by: {spec.get('group_by')}")
+    print(f"group_df is None: {group_df is None}")
+    if group_df is not None:
+        print(f"group_df is empty: {group_df.empty}")
+        print(f"group_df shape: {group_df.shape}")
+        print(f"group_df columns: {list(group_df.columns)}")
+        print(f"group_df head:\n{group_df.head()}")
+    else:
+        print("⚠️ group_df is None - NO CHART WILL BE GENERATED")
+    print("="*60 + "\n")
+    # ========== END DEBUG ==========
     final_answer = core_answer
 
     # Metadata comes at the bottom of the textual answer
