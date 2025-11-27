@@ -1,61 +1,65 @@
 import json
 import re
-from typing import Any, Dict, Optional, List
+from typing import List, Dict, Any
 
-import pandas as pd
 import altair as alt
-import streamlit as st
+import pandas as pd
 
-
-# Pattern for capturing the ```chart ... ``` JSON block
-CHART_BLOCK_PATTERN = re.compile(
-    r"```chart\s*\n(.*?)```",
+# Regex to find ```chart ... ``` blocks
+_CHART_BLOCK_RE = re.compile(
+    r"```chart\s*(.*?)```",
     re.DOTALL | re.IGNORECASE,
 )
 
 
 def strip_chart_blocks(answer: str) -> str:
     """
-    Remove the ```chart ...``` JSON block from the answer text
-    so the user does not see raw JSON in the chat.
+    Remove all ```chart ... ``` blocks from the answer text.
+    Used so the user only sees the explanation + tables, not the JSON.
     """
     if not answer:
-        return ""
-    cleaned = CHART_BLOCK_PATTERN.sub("", answer)
-    return cleaned.strip()
+        return answer
+    return _CHART_BLOCK_RE.sub("", answer).strip()
 
 
-def _extract_chart_spec(answer: str) -> Optional[Dict[str, Any]]:
+def extract_chart_blocks(answer: str) -> List[Dict[str, Any]]:
     """
-    Extract the JSON chart spec from the ```chart``` code block.
+    Extract and parse all chart JSON blocks from the answer.
+    Each block is expected to be a JSON object describing the chart.
     """
     if not answer:
-        return None
+        return []
 
-    match = CHART_BLOCK_PATTERN.search(answer)
-    if not match:
-        return None
-
-    raw = match.group(1).strip()
-    try:
-        spec = json.loads(raw)
-        if isinstance(spec, dict):
-            return spec
-    except json.JSONDecodeError:
-        st.warning("Could not parse chart JSON.")
-        return None
-
-    return None
+    blocks: List[Dict[str, Any]] = []
+    for match in _CHART_BLOCK_RE.finditer(answer):
+        raw = match.group(1).strip()
+        try:
+            spec = json.loads(raw)
+            if isinstance(spec, dict):
+                blocks.append(spec)
+        except Exception:
+            continue
+    return blocks
 
 
-def _build_chart(spec: Dict[str, Any]):
+def _build_chart_from_spec(spec: Dict[str, Any]):
     """
-    Build an Altair chart from the parsed spec.
-    Supports: line, bar, pie
+    Build an Altair chart from the JSON spec produced by _build_chart_block
+    in query_engine.py.
+
+    Expected spec shape:
+      {
+        "type": "bar" | "line" | "pie",
+        "xField": "...",
+        "yField": "...",
+        "seriesField": "... or None",
+        "aggregation": "...",
+        "group_by": [...],
+        "data": [{...}, {...}, ...]
+      }
     """
-    data: List[Dict[str, Any]] = spec.get("data") or []
+    data = spec.get("data") or []
     if not data:
-        st.warning("Chart spec contains no data.")
         return None
 
     df = pd.DataFrame(data)
@@ -66,94 +70,55 @@ def _build_chart(spec: Dict[str, Any]):
     series_field = spec.get("seriesField")
 
     if not x_field or not y_field:
-        st.warning("Chart spec missing xField or yField.")
+        # Not enough info to build a chart
         return None
 
-    if x_field not in df.columns or y_field not in df.columns:
-        st.warning("Chart spec references columns not found in data.")
-        return None
-
-    # ------------------ LINE ------------------
-    if chart_type == "line":
-        enc = {
-            "x": alt.X(x_field, title=x_field),
-            "y": alt.Y(y_field, title=y_field),
-        }
-        if series_field and series_field in df.columns:
-            enc["color"] = alt.Color(series_field, title=series_field)
-
-        chart = (
-            alt.Chart(df)
-            .mark_line(point=True)
-            .encode(**enc)
-            .properties(width="container", height=400)
-        )
-
-    # ------------------ BAR ------------------
-    elif chart_type == "bar":
-        enc = {
-            "x": alt.X(x_field, title=x_field),
-            "y": alt.Y(y_field, title=y_field),
-        }
-        if series_field and series_field in df.columns:
-            enc["color"] = alt.Color(series_field, title=series_field)
-
-        chart = (
-            alt.Chart(df)
-            .mark_bar()
-            .encode(**enc)
-            .properties(width="container", height=400)
-        )
-
-    # ------------------ PIE ------------------
-    elif chart_type == "pie":
-        total = df[y_field].sum()
-
-        # Add percentage column
-        if total and total != 0:
-            df["__pct"] = df[y_field] / total * 100
-
+    # Pie chart: special handling
+    if chart_type == "pie":
+        angle = alt.Theta(y_field, type="quantitative")
+        color_field = series_field or x_field
+        color = alt.Color(color_field, type="nominal")
         chart = (
             alt.Chart(df)
             .mark_arc()
-            .encode(
-                theta=alt.Theta(field=y_field, type="quantitative"),
-                color=alt.Color(field=x_field, type="nominal"),
-                tooltip=[
-                    x_field,
-                    alt.Tooltip(y_field, format=",.1f"),
-                    alt.Tooltip("__pct", title="Share (%)", format=".1f"),
-                ],
-            )
-            .properties(width=400, height=400)
+            .encode(angle=angle, color=color, tooltip=list(df.columns))
         )
+        return chart
 
-    # ------------------ FALLBACK ------------------
+    # Common encodings for bar / line
+    x_enc = alt.X(x_field, type="nominal", sort="-y")
+    y_enc = alt.Y(y_field, type="quantitative")
+    color_enc = alt.Color(series_field, type="nominal") if series_field else None
+
+    if chart_type == "line":
+        base = alt.Chart(df).mark_line()
     else:
-        st.warning(f"Unknown chart type '{chart_type}', using bar chart instead.")
-        chart = (
-            alt.Chart(df)
-            .mark_bar()
-            .encode(
-                x=alt.X(x_field),
-                y=alt.Y(y_field),
-            )
-            .properties(width="container", height=400)
-        )
+        # default to bar
+        base = alt.Chart(df).mark_bar()
 
-    return chart
+    if color_enc is not None:
+        chart = base.encode(x=x_enc, y=y_enc, color=color_enc, tooltip=list(df.columns))
+    else:
+        chart = base.encode(x=x_enc, y=y_enc, tooltip=list(df.columns))
+
+    return chart.properties(width="container")
 
 
-def render_chart_from_answer(answer: str) -> None:
+def render_chart_from_answer(answer: str) -> List[alt.Chart]:
     """
-    1. Extract the chart JSON from the assistant's reply
-    2. Build Altair chart
-    3. Render it in Streamlit
-    """
-    spec = _extract_chart_spec(answer)
-    if not spec:
-        return
+    Parse the answer, build charts from any chart blocks, and return
+    a list of Altair charts. The caller is responsible for displaying them.
 
-    chart = _build_chart(spec)
-    if chart is not None:
-        st.altair_chart(chart, use_container_width=True)
+    Example usage in Streamlit:
+
+        charts = render_chart_from_answer(raw_answer)
+        for ch in charts:
+            st.altair_chart(ch, use_container_width=True)
+    """
+    charts: List[alt.Chart] = []
+    specs = extract_chart_blocks(answer)
+    for spec in specs:
+        ch = _build_chart_from_spec(spec)
+        if ch is not None:
+            charts.append(ch)
+    return charts
