@@ -2218,6 +2218,7 @@ def _build_chart_block(
     spec: Dict[str, Any],
     aggregation: str
 ) -> Optional[str]:
+    """Build a chart specification for Altair visualization."""
     import json
 
     if group_df is None or group_df.empty:
@@ -2227,32 +2228,56 @@ def _build_chart_block(
     if not cols:
         return None
 
-    # 🔧 NEW: safe lowercase list of column names as strings
-    lower_cols = [str(c).lower() for c in cols]
-
     group_by = spec.get("group_by") or []
-
-    # ---- Infer chart type from question + aggregation ----
     q_lower = (spec.get("_question_text") or "").lower()
-    ...
-    # (unchanged code in between)
-    ...
 
-    # Optional series field (color grouping)
+    # ---- Determine chart type ----
+    chart_type = "bar"  # default
+    
+    if "line" in q_lower or "trend" in q_lower or "over time" in q_lower:
+        chart_type = "line"
+    elif "pie" in q_lower or "share" in q_lower or "percentage" in q_lower:
+        chart_type = "pie"
+
+    # ---- Infer X and Y fields ----
+    # X field: first non-numeric column (category)
+    x_field = None
+    for col in cols:
+        if not pd.api.types.is_numeric_dtype(group_df[col]):
+            x_field = col
+            break
+    
+    if x_field is None:
+        x_field = cols[0]
+
+    # Y field: first numeric column (metric)
+    y_field = None
+    for col in cols:
+        if pd.api.types.is_numeric_dtype(group_df[col]):
+            y_field = col
+            break
+    
+    if y_field is None:
+        if len(cols) > 1:
+            y_field = cols[1]
+        else:
+            return None
+
+    # ---- Series field (for color grouping in bar/line charts) ----
     series_field = None
     if chart_type in ("line", "bar"):
-        # Work with lowercase *string* versions of the column names
-        lower_cols = [str(c).lower() for c in cols]
-        x_field_lower = str(x_field).lower() if x_field is not None else ""
-
-        # e.g. if we grouped by both year and week, use year as series
-        if "year" in lower_cols and x_field_lower != "year":
-            for c in cols:
-                if str(c).lower() == "year":
-                    series_field = c
+        # If we have Year column and X field is not Year, use Year as series
+        if "Year" in cols and x_field != "Year":
+            series_field = "Year"
+        # Otherwise, use first non-numeric, non-x column
+        elif len(cols) > 2:
+            for col in cols:
+                if col != x_field and col != y_field and not pd.api.types.is_numeric_dtype(group_df[col]):
+                    series_field = col
                     break
 
-    code = {
+    # ---- Build chart spec ----
+    spec_dict = {
         "type": chart_type,
         "xField": x_field,
         "yField": y_field,
@@ -2262,7 +2287,82 @@ def _build_chart_block(
         "data": group_df.to_dict(orient="records"),
     }
 
-    return "```chart\n" + json.dumps(code, indent=2) + "\n```"
+    return "```chart\n" + json.dumps(spec_dict, indent=2) + "\n```"
+def _build_chart_block(
+    group_df: pd.DataFrame,
+    spec: Dict[str, Any],
+    aggregation: str
+) -> Optional[str]:
+    """Build a chart specification for Altair visualization."""
+    import json
+
+    if group_df is None or group_df.empty:
+        return None
+
+    cols = list(group_df.columns)
+    if not cols:
+        return None
+
+    group_by = spec.get("group_by") or []
+    q_lower = (spec.get("_question_text") or "").lower()
+
+    # ---- Determine chart type ----
+    chart_type = "bar"  # default
+    
+    if "line" in q_lower or "trend" in q_lower or "over time" in q_lower:
+        chart_type = "line"
+    elif "pie" in q_lower or "share" in q_lower or "percentage" in q_lower:
+        chart_type = "pie"
+
+    # ---- Infer X and Y fields ----
+    # X field: first non-numeric column (category)
+    x_field = None
+    for col in cols:
+        if not pd.api.types.is_numeric_dtype(group_df[col]):
+            x_field = col
+            break
+    
+    if x_field is None:
+        x_field = cols[0]
+
+    # Y field: first numeric column (metric)
+    y_field = None
+    for col in cols:
+        if pd.api.types.is_numeric_dtype(group_df[col]):
+            y_field = col
+            break
+    
+    if y_field is None:
+        if len(cols) > 1:
+            y_field = cols[1]
+        else:
+            return None
+
+    # ---- Series field (for color grouping in bar/line charts) ----
+    series_field = None
+    if chart_type in ("line", "bar"):
+        # If we have Year column and X field is not Year, use Year as series
+        if "Year" in cols and x_field != "Year":
+            series_field = "Year"
+        # Otherwise, use first non-numeric, non-x column
+        elif len(cols) > 2:
+            for col in cols:
+                if col != x_field and col != y_field and not pd.api.types.is_numeric_dtype(group_df[col]):
+                    series_field = col
+                    break
+
+    # ---- Build chart spec ----
+    spec_dict = {
+        "type": chart_type,
+        "xField": x_field,
+        "yField": y_field,
+        "seriesField": series_field,
+        "aggregation": aggregation,
+        "group_by": group_by,
+        "data": group_df.to_dict(orient="records"),
+    }
+
+    return "```chart\n" + json.dumps(spec_dict, indent=2) + "\n```"
 
 # --------------------------------------------------------------------
 # 3) PUBLIC ENTRYPOINT – called from app.py
