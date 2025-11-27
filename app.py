@@ -38,7 +38,6 @@ UI_TEXT = {
     "download_xlsx": "📊 Download chat (Excel)",
 }
 
-
 # ================================
 # 🔧 ENV + API
 # ================================
@@ -98,6 +97,7 @@ st.markdown(
         border: none !important;
     }
 
+    /* Hide the "Press Enter to submit" message */
     [data-testid="stForm"] [data-testid="InputInstructions"],
     [data-testid="stForm"] .instructions,
     [data-testid="stForm"] small,
@@ -151,7 +151,6 @@ st.markdown(
         border: none !important;
     }
 
-    /* Target the text input - make it transparent */
     [data-testid="stForm"] [data-testid="stTextInput"] input {
         background: transparent !important;
         border: none !important;
@@ -167,9 +166,6 @@ st.markdown(
         opacity: 0.7 !important;
     }
 
-    /* ================================
-       MOBILE TWEAKS (≤ 768px)
-       ================================ */
     @media (max-width: 768px) {
         .block-container {
             padding-top: 2.2rem !important;
@@ -241,10 +237,7 @@ st.markdown(
         background: transparent !important;
     }
 
-    /* ==========================
-       Original st.chat_input styling
-       ========================== */
-
+    /* Kill the grey outer bar of st.chat_input (kept for reference) */
     [data-testid="stChatInput"] {
         background: transparent !important;
         border: none !important;
@@ -285,11 +278,38 @@ st.markdown(
     [data-testid="stChatInput"] button[kind="primary"]:hover {
         background-color: #6A5CA8 !important;
     }
+
+    .chat-bottom-spacer {
+        height: 80px;
+    }
+
+    .alpha-chat-footer-outer {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        padding: 8px 0;
+        background: linear-gradient(
+            to top,
+            rgba(255,255,255,0.95),
+            rgba(255,255,255,0.9),
+            rgba(255,255,255,0.0)
+        );
+        z-index: 999;
+    }
+
+    .alpha-chat-footer-inner {
+        max-width: 1100px;
+        margin: 0 auto;
+    }
+
+    .alpha-chat-input-wrapper {
+        width: 100%;
+    }
 </style>
 """,
     unsafe_allow_html=True,
 )
-
 
 # ================================
 # ⚙️ STATE
@@ -421,8 +441,10 @@ def main():
             role = msg.get("role", "assistant")
             content = msg.get("content", "")
 
-            # Choose avatar
-            avatar = "🧪" if role == "user" else "☢️"
+            if role == "user":
+                avatar = "🧪"   # user icon
+            else:
+                avatar = "☢️"   # Alpha icon
 
             with st.chat_message(role, avatar=avatar):
                 st.markdown(content)
@@ -433,8 +455,6 @@ def main():
                     if charts:
                         for chart in charts:
                             st.altair_chart(chart, use_container_width=True)
-
-
 
         # Spacer so last message is above fixed footer
         st.markdown('<div class="chat-bottom-spacer"></div>', unsafe_allow_html=True)
@@ -470,7 +490,7 @@ def main():
         # Store user message
         st.session_state.messages.append({"role": "user", "content": user_text})
 
-        # 1) Generate core Alpha answer
+        # Generate raw answer (with potential chart blocks)
         try:
             raw_answer = answer_question_from_df(
                 user_text,
@@ -480,26 +500,29 @@ def main():
         except Exception as e:
             raw_answer = f"An error occurred: {e}"
 
-        # 2) Optional refinement with GPT (style only)
+        # ---------------------------------
+        # ✨ OPTIONAL GPT REFINEMENT LAYER
+        # ---------------------------------
         refined_answer = raw_answer
 
-        if client is not None and not raw_answer.startswith("An error occurred"):
+        if client is not None:
             try:
-                refinement_prompt = f"""
+                # Remove chart blocks before sending to GPT
+                answer_without_charts = strip_chart_blocks(raw_answer)
+
+                prompt_refine = f"""
 You are Alpha, a senior data analyst.
 
-Rewrite the response below so that it:
-- sounds more natural and conversational (less robotic)
-- slightly varies the sentence structure and wording
-- preserves ALL numeric values exactly as they appear
-- preserves any markdown tables exactly (same rows/columns, same numbers)
-- does NOT add, remove or change any data or metrics
+Refine the text below so that it:
+- sounds natural and non-robotic
+- preserves ALL numbers exactly
+- keeps tables in markdown format
+- does NOT add or infer new data
+- keeps the structure clear and concise
 
-Respond with ONLY the refined markdown text.
-
-Original response:
+Text:
 ---
-{raw_answer}
+{answer_without_charts}
 ---
 """
 
@@ -508,29 +531,32 @@ Original response:
                     messages=[
                         {
                             "role": "system",
-                            "content": "You refine analytical outputs for business users without changing any numbers.",
+                            "content": "You refine analytical outputs for business users.",
                         },
-                        {"role": "user", "content": refinement_prompt},
+                        {"role": "user", "content": prompt_refine},
                     ],
-                    temperature=0.3,
+                    temperature=0.2,
                 )
 
                 refined_answer = response.choices[0].message.content.strip()
 
             except Exception:
-                refined_answer = raw_answer
+                # If refinement fails, fall back to raw answer
+                refined_answer = strip_chart_blocks(raw_answer)
 
-        # 3) Strip chart blocks from what we show in the chat bubble
-        cleaned = strip_chart_blocks(refined_answer)
+        # For display we use the refined text (no chart blocks)
+        cleaned = refined_answer
 
-        # 4) Store assistant message
+        # Store assistant message with BOTH:
+        # - content (refined text for chat)
+        # - raw_answer (original with chart blocks for rendering)
         st.session_state.messages.append({
             "role": "assistant",
-            "content": cleaned,     # refined, chart-stripped text
-            "raw_answer": raw_answer,  # original, with ```chart``` blocks
+            "content": cleaned,
+            "raw_answer": raw_answer,
         })
 
-        # 5) Rerun so the updated chat (and charts) are rendered above
+        # Rerun so the updated chat (and charts) are rendered above
         st.rerun()
 
 
