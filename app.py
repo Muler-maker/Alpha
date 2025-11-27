@@ -345,11 +345,6 @@ def load_data_if_needed():
     ss.consolidated_df = consolidated_df
     ss.data_loaded = True
 
-    st.markdown("### 🔎 DEBUG – Consolidated DF columns")
-    st.write(list(consolidated_df.columns))
-    st.markdown("---")
-
-
 # ================================
 # 🎨 HEADER
 # ================================
