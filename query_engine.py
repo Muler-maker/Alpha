@@ -2269,12 +2269,25 @@ def _build_chart_block(
     if x_field is None:
         x_field = cols[0]
     
-    # Y field: first numeric column (metric)
+    # Y field: prioritize mCi/metric columns, skip non-metric numerics like Week
+    # Priority: anything with "mCi", "Growth", "Delta", "Pct", "Average" in the name
+    priority_keywords = ["mci", "growth", "delta", "pct", "average", "actual", "projected"]
+    
     y_field = None
+    # First pass: look for priority metric columns
     for col in cols:
         if pd.api.types.is_numeric_dtype(chart_data[col]):
-            y_field = col
-            break
+            col_lower = col.lower()
+            if any(kw in col_lower for kw in priority_keywords):
+                y_field = col
+                break
+    
+    # Fallback: any numeric column that's not Week or Year
+    if y_field is None:
+        for col in cols:
+            if pd.api.types.is_numeric_dtype(chart_data[col]) and col not in ("Week", "Year"):
+                y_field = col
+                break
     
     if y_field is None:
         if len(cols) > 1:
@@ -2303,7 +2316,6 @@ def _build_chart_block(
     }
     
     return "```chart\n" + json.dumps(spec_dict, indent=2) + "\n```"
-
 # --------------------------------------------------------------------
 # 3) PUBLIC ENTRYPOINT – called from app.py
 # --------------------------------------------------------------------
