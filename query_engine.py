@@ -2026,6 +2026,13 @@ def _run_aggregation(
 
         total_actual = float(merged["Actual_mCi"].sum())
         return merged, total_actual
+    # ------------------------------------------------------------------
+    # GROWTH RATE (delegated to WoW / YoY helpers)
+    # ------------------------------------------------------------------
+    if aggregation == "growth_rate":
+        # Growth calculations are handled elsewhere (WoW / YoY helpers)
+        # Always return a tuple to avoid unpacking errors
+        return group_df, numeric_value
 
     # ------------------------------------------------------------------
     # SUM (default)
