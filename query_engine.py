@@ -47,7 +47,7 @@ FIELD_CANDIDATES = {
     "customer": ["The customer", "Customer", "Company name"],
 
     # Unique order quantity (actuals)
-    "total_mci": ["Total amount ordered (mCi)", "Total_mCi"],
+    "total_mci": ["Total_mCi", "Total amount ordered (mCi)"],
 
     # Projection quantity (from Projections sheet, joined in consolidated.py)
     "proj_mci": ["Proj_Amount"],
