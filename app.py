@@ -6,25 +6,9 @@ import streamlit as st
 from dotenv import load_dotenv
 from openai import OpenAI
 from PIL import Image
+
 pd.options.display.float_format = "{:,.0f}".format
-from charts import render_chart_from_answer, strip_chart_blocks
-from data_loader import (
-    load_orders,
-    load_projection,
-    load_metadata,
-    preprocess_orders,
-)
-from consolidated import build_consolidated_df
-from query_engine import answer_question_from_df
-import os
-import io
-import json
-import pandas as pd
-import streamlit as st
-from dotenv import load_dotenv
-from openai import OpenAI
-from PIL import Image
-pd.options.display.float_format = "{:,.0f}".format
+
 from charts import render_chart_from_answer, strip_chart_blocks
 from data_loader import (
     load_orders,
@@ -95,8 +79,8 @@ st.markdown(
         border-radius: 6px;        /* slightly smaller */
         font-size: 10px;           /* reduced from 13px (~50%) */
         display: inline-block;
-        margin-top: -22px;           /* optional smaller margin */
-        margin-bottom: 2px;       /* optional smaller margin */
+        margin-top: -22px;         /* optional smaller margin */
+        margin-bottom: 2px;        /* optional smaller margin */
     }
 
 
@@ -471,14 +455,12 @@ def main():
                         for chart in charts:
                             st.altair_chart(chart, use_container_width=True)
 
-
         # Spacer so last message is above fixed footer
         st.markdown('<div class="chat-bottom-spacer"></div>', unsafe_allow_html=True)
 
         st.markdown("</div>", unsafe_allow_html=True)  # end alpha-content-wrapper
 
     # ========== FIXED CHAT FOOTER ==========
-    # We render this once, outside the content wrapper, at the very end of the app.
     footer_html = """
 <div class="alpha-chat-footer-outer">
   <div class="alpha-chat-footer-inner">
@@ -517,14 +499,54 @@ def main():
         except Exception as e:
             raw_answer = f"An error occurred: {e}"
 
-        # Strip chart blocks for the chat text
-        cleaned = strip_chart_blocks(raw_answer)
+        # ---------------------------------
+        # ✨ OPTIONAL GPT REFINEMENT LAYER
+        # ---------------------------------
+        refined_answer = raw_answer
+
+        if client is not None and not raw_answer.startswith("An error occurred:"):
+            try:
+                refinement_prompt = f"""
+You are Alpha, a senior data analyst.
+
+Refine the text below so that it:
+- sounds natural and non-robotic
+- preserves ALL numbers exactly
+- keeps tables in markdown
+- does NOT add or infer new data
+
+Text:
+---
+{raw_answer}
+---
+"""
+
+                response = client.chat.completions.create(
+                    model="gpt-4.1-mini",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You refine analytical outputs for business users.",
+                        },
+                        {"role": "user", "content": refinement_prompt},
+                    ],
+                    temperature=0.2,
+                )
+
+                refined_answer = response.choices[0].message.content.strip()
+
+            except Exception:
+                # If refinement fails, fall back to the original answer
+                refined_answer = raw_answer
+
+        # Strip chart blocks for the chat text (use refined text)
+        cleaned = strip_chart_blocks(refined_answer)
 
         # Store a single assistant message with both clean text and raw answer
         st.session_state.messages.append({
             "role": "assistant",
-            "content": cleaned,
-            "raw_answer": raw_answer,
+            "content": cleaned,        # what the user sees
+            "raw_answer": raw_answer,  # original engine output for charts
         })
 
         # Rerun so the updated chat (and charts) are rendered above
@@ -533,4 +555,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
