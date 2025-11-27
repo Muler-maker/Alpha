@@ -75,33 +75,29 @@ st.markdown(
     .data-badge {
         background-color: #E8F7E4;
         color: #267c3b;
-        padding: 3px 7px;          /* reduced by 50% */
-        border-radius: 6px;        /* slightly smaller */
-        font-size: 10px;           /* reduced from 13px (~50%) */
+        padding: 3px 7px;
+        border-radius: 6px;
+        font-size: 10px;
         display: inline-block;
-        margin-top: -22px;         /* optional smaller margin */
-        margin-bottom: 2px;        /* optional smaller margin */
+        margin-top: -22px;
+        margin-bottom: 2px;
     }
-
 
     /* ==========================
        Form-based chat input styling
        ========================== */
 
-    /* Remove form border and background */
     [data-testid="stForm"] {
         border: none !important;
         padding: 0 !important;
         background: transparent !important;
     }
 
-    /* Remove grey background from all form containers */
     [data-testid="stForm"] > div {
         background: transparent !important;
         border: none !important;
     }
 
-    /* Hide the "Press Enter to submit" message */
     [data-testid="stForm"] [data-testid="InputInstructions"],
     [data-testid="stForm"] .instructions,
     [data-testid="stForm"] small,
@@ -166,7 +162,6 @@ st.markdown(
         width: 100% !important;
     }
 
-    /* Fix placeholder text */
     [data-testid="stForm"] [data-testid="stTextInput"] input::placeholder {
         color: #9CA3AF !important;
         opacity: 0.7 !important;
@@ -176,8 +171,6 @@ st.markdown(
        MOBILE TWEAKS (≤ 768px)
        ================================ */
     @media (max-width: 768px) {
-
-        /* Prevent logo cutoff + give margin on sides */
         .block-container {
             padding-top: 2.2rem !important;
             max-width: 100% !important;
@@ -185,14 +178,12 @@ st.markdown(
             padding-right: 1rem !important;
         }
 
-        /* Slightly smaller font & more vertical padding */
         [data-testid="stForm"] [data-testid="stTextInput"] input {
             font-size: 14px !important;
             padding-top: 10px !important;
             padding-bottom: 10px !important;
         }
 
-        /* Make footer wrapper respect screen width */
         .alpha-chat-footer-inner,
         .alpha-chat-input-wrapper {
             width: 100% !important;
@@ -201,14 +192,12 @@ st.markdown(
         }
     }
 
-    /* Focus state */
     [data-testid="stForm"] [data-testid="stTextInput"] input:focus {
         outline: none !important;
         box-shadow: none !important;
         background: transparent !important;
     }
 
-    /* Style the submit button as a circle with purple background */
     [data-testid="stForm"] button[kind="primary"],
     [data-testid="stForm"] button[type="submit"],
     [data-testid="stForm"] button {
@@ -234,19 +223,16 @@ st.markdown(
         background-color: #6A5CA8 !important;
     }
 
-    /* Remove any button wrapper backgrounds */
     [data-testid="stForm"] [data-testid="stHorizontalBlock"] [data-testid="stColumn"]:last-child > div {
         background: transparent !important;
     }
 
-    /* Target ALL elements inside button with transparent bg */
     [data-testid="stForm"] button *,
     [data-testid="stForm"] button > * {
         background-color: transparent !important;
         background: transparent !important;
     }
 
-    /* Style button icon - grey arrow */
     [data-testid="stForm"] button p {
         margin: 0 !important;
         font-size: 16px !important;
@@ -256,33 +242,29 @@ st.markdown(
     }
 
     /* ==========================
-       Original st.chat_input styling (kept for reference)
+       Original st.chat_input styling
        ========================== */
 
-    /* Kill the grey outer bar */
     [data-testid="stChatInput"] {
         background: transparent !important;
         border: none !important;
         box-shadow: none !important;
     }
 
-    /* Inner wrapper (also grey by default) */
     [data-testid="stChatInput"] > div {
         background: transparent !important;
         border: none !important;
         box-shadow: none !important;
     }
 
-    /* Actual input pill */
     [data-testid="stChatInput"] [data-baseweb="base-input"] {
-        background-color: #F6F0FF !important;   /* light purple */
+        background-color: #F6F0FF !important;
         border-radius: 999px !important;
         border: 1px solid #E0D0FF !important;
         box-shadow: none !important;
         padding-left: 18px !important;
     }
 
-    /* Text inside input */
     [data-testid="stChatInput"] input,
     [data-testid="stChatInput"] textarea {
         background: transparent !important;
@@ -290,7 +272,6 @@ st.markdown(
         font-size: 15px !important;
     }
 
-    /* Send button – purple circle */
     [data-testid="stChatInput"] button[kind="primary"] {
         background-color: var(--isotopia-light) !important;
         color: #FFFFFF !important;
@@ -305,10 +286,10 @@ st.markdown(
         background-color: #6A5CA8 !important;
     }
 </style>
-
 """,
     unsafe_allow_html=True,
 )
+
 
 # ================================
 # ⚙️ STATE
@@ -450,8 +431,10 @@ def main():
 
                 # If this message has a chart block, render the chart(s)
                 if role == "assistant" and "raw_answer" in msg:
-                    render_chart_from_answer(msg["raw_answer"])
-
+                    charts = render_chart_from_answer(msg["raw_answer"])
+                    if charts:
+                        for chart in charts:
+                            st.altair_chart(chart, use_container_width=True)
 
         # Spacer so last message is above fixed footer
         st.markdown('<div class="chat-bottom-spacer"></div>', unsafe_allow_html=True)
@@ -532,28 +515,23 @@ Original response:
                     temperature=0.3,
                 )
 
-                # New, styled text
                 refined_answer = response.choices[0].message.content.strip()
 
             except Exception:
-                # If refinement fails for any reason, fall back silently
                 refined_answer = raw_answer
 
         # 3) Strip chart blocks from what we show in the chat bubble
         cleaned = strip_chart_blocks(refined_answer)
 
         # 4) Store assistant message
-        # - content: refined, chart-stripped text
-        # - raw_answer: original engine output (for chart parsing)
         st.session_state.messages.append({
             "role": "assistant",
-            "content": cleaned,
-            "raw_answer": raw_answer,
+            "content": cleaned,     # refined, chart-stripped text
+            "raw_answer": raw_answer,  # original, with ```chart``` blocks
         })
 
         # 5) Rerun so the updated chat (and charts) are rendered above
         st.rerun()
-
 
 
 if __name__ == "__main__":
