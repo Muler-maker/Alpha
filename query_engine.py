@@ -2384,11 +2384,58 @@ def _reshape_for_display(group_df: pd.DataFrame, spec: Dict[str, Any]) -> pd.Dat
 
     pivot_df.columns = [str(c) for c in pivot_df.columns]
     return pivot_df
+def _refine_answer_text(
+    client,
+    raw_answer: str,
+    question: str,
+) -> str:
+    """
+    Optional stylistic refinement step:
+    - Preserve ALL numbers.
+    - Preserve ALL markdown tables.
+    - Preserve any ```chart``` blocks.
+    - Only improve wording, clarity, and flow.
+    """
+    if client is None:
+        return raw_answer
+
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4.1-mini",  # or whatever small/cheap model you're using
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are polishing an analytics answer for a radiopharmaceuticals dashboard.\n"
+                        "REQUIREMENTS:\n"
+                        "- Do NOT change any numbers.\n"
+                        "- Do NOT change any markdown tables (rows, columns, or values).\n"
+                        "- Do NOT change any ```chart code blocks.\n"
+                        "- Do NOT add new analysis or interpretations.\n"
+                        "You may only improve wording, tone, and readability of the surrounding text."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"User question:\n{question}\n\n"
+                        f"Current answer in markdown:\n{raw_answer}"
+                    ),
+                },
+            ],
+            temperature=0.2,
+        )
+        content = resp.choices[0].message.content
+        return content.strip() if content else raw_answer
+    except Exception:
+        # Fail-safe: if refinement fails for any reason, fall back to raw answer
+        return raw_answer
 
 def answer_question_from_df(
     question: str,
     consolidated_df: pd.DataFrame,
     history: Optional[List[Dict[str, str]]] = None,
+    client=None,
 ) -> str:
     """Main function to interpret, execute, and answer a question from the DataFrame."""
     if consolidated_df is None or consolidated_df.empty:
@@ -2712,11 +2759,17 @@ def answer_question_from_df(
     if meta_block:
         final_answer += meta_block
 
-    # Chart block is appended so the frontend can detect ```chart ... ``` 
+    # Chart block is appended so the frontend can detect ```chart ... ```
     if chart_block:
         final_answer += "\n\n" + chart_block
 
-    return final_answer
+    # 🔧 Optional refinement pass with GPT
+    try:
+        refined_answer = _refine_answer_text(client, final_answer, question)
+    except Exception:
+        refined_answer = final_answer
+
+    return refined_answer
 
 # -------------------------
 # Dynamic week window logic
