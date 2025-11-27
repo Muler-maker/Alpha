@@ -492,6 +492,7 @@ def main():
 
         # Generate raw answer (with potential chart blocks)
         try:
+            st.write("DEBUG – columns:", list(df.columns))
             raw_answer = answer_question_from_df(
                 user_text,
                 df,
