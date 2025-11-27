@@ -1448,6 +1448,8 @@ def _calculate_wow_growth(
 ) -> Tuple[pd.DataFrame, float]:
 
     print("✅ ENTERED _calculate_wow_growth")
+    print("DEBUG columns:", list(df.columns))
+    print("DEBUG total_col:", total_col)   
 
     # rest of your existing logic follows
 
