@@ -2755,7 +2755,7 @@ def answer_question_from_df(
     # ------------------------------------------------------------------
     elif aggregation == "growth_rate":
         if group_df is None:
-            # Single global growth number
+            # Single global / period-over-period growth number
             if numeric_value is None or pd.isna(numeric_value):
                 core_answer = (
                     f"I couldn't compute a growth rate for {status_text} for {filter_text} "
@@ -2768,12 +2768,44 @@ def answer_question_from_df(
                     f"is approximately **{pct:.1f}%**."
                 )
         else:
-            # Grouped growth table: expect PeriodA_mCi, PeriodB_mCi, GrowthRate, Status
-            preview_md = group_df.to_markdown(index=False)
-            core_answer = (
-                f"Here is the **growth analysis per group** for {status_text} for {filter_text}.\n\n"
-                + preview_md
-            )
+            cols = list(group_df.columns)
+
+            # --- Option A: week-over-week growth table (from _calculate_wow_growth) ---
+            if "WoW_Growth" in cols:
+                preview_md = group_df.to_markdown(index=False)
+
+                time_window = spec.get("time_window") or {}
+                n_weeks = time_window.get("n_weeks")
+
+                if n_weeks:
+                    header = (
+                        f"Here is the **week-over-week growth** for the last **{n_weeks} weeks** "
+                        f"based on {status_text} for {filter_text}.\n\n"
+                    )
+                else:
+                    header = (
+                        f"Here is the **week-over-week growth** per group "
+                        f"based on {status_text} for {filter_text}.\n\n"
+                    )
+
+                core_answer = header + preview_md
+
+            # --- Period A vs Period B table (legacy / explicit compare phrasing) ---
+            elif "PeriodA_mCi" in cols and "PeriodB_mCi" in cols:
+                preview_md = group_df.to_markdown(index=False)
+                core_answer = (
+                    f"Here is the **growth analysis per group** for {status_text} for {filter_text} "
+                    f"between period A and period B.\n\n"
+                    + preview_md
+                )
+
+            # --- Fallback: unknown growth-shaped table, just show it ---
+            else:
+                preview_md = group_df.to_markdown(index=False)
+                core_answer = (
+                    f"Here is the **growth breakdown per group** for {status_text} for {filter_text}:\n\n"
+                    + preview_md
+                )
 
     # Fallback (includes projection_vs_actual, for now it will just show the table)
     else:
