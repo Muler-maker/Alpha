@@ -2349,13 +2349,6 @@ def answer_question_from_df(
 
     row_count = len(df_filtered) if df_filtered is not None else 0
 
-    # If we have NO table and the numeric value is NaN, it's a real error.
-    if group_df is None and (numeric_value is None or pd.isna(numeric_value)):
-        return (
-            "I couldn't compute the requested metric because there was no valid data "
-            "or the base period had zero activity.\n\n" + spec_debug
-        )
-
     # 8) Build the core textual answer by aggregation type
     core_answer = ""
 
