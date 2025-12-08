@@ -2294,17 +2294,6 @@ def answer_question_from_df(
     aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
     
     # ===== DEBUG: Add to core_answer early =====
-    spec_debug = f"""
-**SPEC DEBUG:**
-- aggregation: {aggregation}
-- group_by: {spec.get('group_by')}
-- filters.customer: {filters.get('customer')}
-- filters.year: {filters.get('year')}
-- time_window.mode: {spec.get('time_window', {}).get('mode')}
-- 'week' in group_by: {'week' in (spec.get('group_by') or [])}
-- 'Week' in df_filtered columns: {'Week' in (df_filtered.columns if df_filtered is not None else [])}
-"""
-
     parts = []
     if filters.get("customer"):
         parts.append(f"customer **{filters['customer']}**")
@@ -2507,32 +2496,6 @@ def answer_question_from_df(
 
     if chart_block:
         final_answer += "\n\n" + chart_block
-
-    # Optional refinement pass
-    try:
-        refined_answer = _refine_answer_text(client, final_answer, question)
-    except Exception:
-        refined_answer = final_answer
-
-    # ===== ADD DEBUG INFO TO RESPONSE =====
-    debug_info = f"""
----
-**🔴 DEBUG INFO:**
-- aggregation: {aggregation}
-- group_by: {spec.get('group_by')}
-- group_df is None: {group_df is None}
-- group_df shape: {group_df.shape if group_df is not None else 'N/A'}
-- group_df columns: {list(group_df.columns) if group_df is not None else 'N/A'}
-- customer filter: {spec.get('filters', {}).get('customer')}
-- year filter: {spec.get('filters', {}).get('year')}
----
-"""
-    
-    refined_answer += debug_info
-
-    print("\n" + "="*70)
-    print("DEBUG answer_question_from_df() END")
-    print("="*70 + "\n")
     
     return refined_answer
 # -------------------------
