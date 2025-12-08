@@ -1645,26 +1645,43 @@ def _run_aggregation(
     # PROJECTION VS ACTUAL
     # ------------------------------------------------------------------
     if aggregation == "projection_vs_actual":
+        # 🔎 Basic debug
+        print("\n🔴 PROJECTION_VS_ACTUAL aggregation()")
+        print(f"  group_by: {group_by}")
+        print(f"  initial group_cols (from mapping): {group_cols}")
+        print(f"  df_filtered.shape: {df_filtered.shape}")
+        print(f"  df_filtered columns: {list(df_filtered.columns)}")
+
         actual_col = mapping.get("total_mci")
         proj_col = mapping.get("proj_mci")
 
+        print(f"  actual_col: {actual_col}")
+        print(f"  proj_col: {proj_col}")
+
+        # If we don't even have the columns, we really can't do anything
         if not actual_col or actual_col not in df_filtered.columns:
+            print("  ⚠️ Missing actual_col in df_filtered → aborting projection_vs_actual")
             return None, float("nan")
         if not proj_col or proj_col not in df_filtered.columns:
+            print("  ⚠️ Missing proj_col in df_filtered → aborting projection_vs_actual")
             return None, float("nan")
 
         # ✅ If the user asked "per week", prefer the activity/projection week
         #    rather than the production "Week" column.
-        if "week" in group_by and "Week number for Activity vs Projection" in df_filtered.columns:
-            new_group_cols: List[str] = []
-            for field in group_by:
-                if field == "week":
-                    # Use the activity/projection week as the real grouping column
-                    new_group_cols.append("Week number for Activity vs Projection")
-                elif mapping.get(field):
-                    new_group_cols.append(mapping[field])
-            group_cols = new_group_cols
+        if "week" in group_by:
+            if "Week number for Activity vs Projection" in df_filtered.columns:
+                new_group_cols: List[str] = []
+                for field in group_by:
+                    if field == "week":
+                        new_group_cols.append("Week number for Activity vs Projection")
+                    elif mapping.get(field):
+                        new_group_cols.append(mapping[field])
+                print(f"  Remapped group_cols to activity/projection week: {new_group_cols}")
+                group_cols = new_group_cols
+            else:
+                print("  ⚠️ 'week' in group_by but no 'Week number for Activity vs Projection' → using default mapping")
 
+        # Keys that uniquely identify a projection row
         proj_keys = [
             c
             for c in [
@@ -1672,18 +1689,26 @@ def _run_aggregation(
                 "ProjWeek",
                 "Week number for Activity vs Projection",
                 "Distributor",
+                "Catalogue description (sold as)",
             ]
             if c in df_filtered.columns
         ]
+        print(f"  proj_keys used for drop_duplicates: {proj_keys}")
 
         df_actual = df_filtered
+
         if proj_keys:
             # One row per (Year, ProjWeek, Week number for Activity vs Projection, Distributor, Product)
             df_proj = df_filtered.drop_duplicates(subset=proj_keys)
         else:
             df_proj = df_filtered
 
+        print(f"  df_actual.shape: {df_actual.shape}")
+        print(f"  df_proj.shape: {df_proj.shape}")
+
         if group_cols:
+            print(f"  Grouping by: {group_cols}")
+
             grp_actual = (
                 df_actual
                 .groupby(group_cols, as_index=False)[actual_col]
@@ -1698,8 +1723,12 @@ def _run_aggregation(
                 .rename(columns={proj_col: "Projected_mCi"})
             )
 
+            print(f"  grp_actual.shape: {grp_actual.shape}")
+            print(f"  grp_proj.shape: {grp_proj.shape}")
+
             merged = pd.merge(grp_actual, grp_proj, on=group_cols, how="outer")
         else:
+            print("  No group_cols – computing single total actual vs projection")
             actual_total = float(df_actual[actual_col].sum())
             projected_total = float(df_proj[proj_col].sum())
 
@@ -1710,6 +1739,7 @@ def _run_aggregation(
                 }
             )
 
+        # Fill NaNs and compute deltas
         merged["Actual_mCi"] = merged["Actual_mCi"].fillna(0.0)
         merged["Projected_mCi"] = merged["Projected_mCi"].fillna(0.0)
         merged["Delta_mCi"] = merged["Actual_mCi"] - merged["Projected_mCi"]
@@ -1720,8 +1750,13 @@ def _run_aggregation(
             axis=1,
         )
 
+        print(f"  merged.shape: {merged.shape}")
+        print(f"  merged.head():\n{merged.head()}")
+
         total_actual = float(merged["Actual_mCi"].sum())
+        print(f"  total_actual: {total_actual}")
         return merged, total_actual
+
 
 
     # ------------------------------------------------------------------
