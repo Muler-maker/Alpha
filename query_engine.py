@@ -259,6 +259,16 @@ ALWAYS:
 
     # Always keep the raw question text for downstream helpers
     spec["_question_text"] = question
+    # Projection vs actual questions – LLM safety net
+    # -------------------------------
+    proj_keywords = ["projection", "projections", "forecast", "budget", "plan"]
+    actual_keywords = ["actual", "actuals", "vs", "versus", "variance", "gap"]
+
+    if any(k in q_lower for k in proj_keywords) and any(k in q_lower for k in actual_keywords):
+        # Force the special projection_vs_actual aggregation so that
+        # _run_aggregation uses Proj_Amount vs Total_mCi
+        spec["aggregation"] = "projection_vs_actual"
+
 
     # ===== CRITICAL FIX: Force growth_rate for growth-related questions =====
     growth_keywords = [
@@ -1018,7 +1028,6 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
         result = _apply_time_window(result, spec)
 
     return result
-
 def _calculate_yoy_growth(
     df: pd.DataFrame,
     spec: Dict[str, Any],
@@ -1027,59 +1036,82 @@ def _calculate_yoy_growth(
     total_col: str,
 ) -> Tuple[pd.DataFrame, float]:
     """
-    Calculate year-over-year growth for each entity (distributor, customer, etc.).
-    Returns a pivoted table with years as columns and growth rates as values.
+    Calculate year-over-year growth for each entity (customer, distributor, etc.).
+
+    Returns a table with:
+      - one column per year (totals)
+      - additional *_Growth columns for each consecutive year pair.
     """
     if df is None or df.empty:
         return None, float("nan")
-    
-    # Get non-year grouping dimensions (e.g., Distributor, Country, etc.)
-    entity_cols = [c for c in group_cols if c != year_col]
-    
-    if not entity_cols:
-        # No entity dimension, just years -> simple YoY table
-        yearly = df.groupby(year_col, as_index=False)[total_col].sum()
-        yearly = yearly.sort_values(year_col)
-        
-        # Calculate YoY growth
-        yearly["YoY_Growth"] = yearly[total_col].pct_change()
-        return yearly, float("nan")
-    
-    # Group by entity + year
-    grouped = df.groupby(entity_cols + [year_col], as_index=False)[total_col].sum()
-    
-    # Pivot: entities as rows, years as columns
-    pivot = grouped.pivot(index=entity_cols, columns=year_col, values=total_col)
-    pivot = pivot.fillna(0)
-    
-    # Calculate growth rates for each consecutive year pair
-    years = sorted(pivot.columns)
-    growth_cols = {}
-    
-    for i in range(1, len(years)):
-        prev_year = years[i-1]
-        curr_year = years[i]
-        col_name = f"{curr_year}_vs_{prev_year}_Growth"
-        
-        # Calculate growth rate
-        growth_cols[col_name] = pivot.apply(
-            lambda row: ((row[curr_year] - row[prev_year]) / row[prev_year] * 100) 
-            if row[prev_year] > 0 else float("nan"),
-            axis=1
+
+    if not year_col or year_col not in df.columns:
+        return None, float("nan")
+    if not total_col or total_col not in df.columns:
+        return None, float("nan")
+
+    # Ensure numeric total column
+    df = df.copy()
+    df[total_col] = pd.to_numeric(df[total_col], errors="coerce").fillna(0.0)
+
+    # Entity columns = all grouping columns except the year itself
+    entity_cols = [c for c in (group_cols or []) if c and c != year_col]
+
+    # Group to get yearly totals per entity
+    group_keys = (entity_cols or []) + [year_col]
+    grouped = (
+        df
+        .groupby(group_keys, as_index=False)[total_col]
+        .sum()
+    )
+
+    # Determine which years we actually have
+    years = sorted(grouped[year_col].dropna().unique().tolist())
+    if len(years) < 2:
+        # Not enough years to calculate YoY
+        return None, float("nan")
+
+    # Pivot: index = entity_cols (can be empty), columns = years, values = totals
+    if entity_cols:
+        pivot = grouped.pivot_table(
+            index=entity_cols,
+            columns=year_col,
+            values=total_col,
+            aggfunc="sum",
+            fill_value=0.0,
         )
-    
-    # Build final table: Entity | 2022 | 2023 | 2024 | 2025 | 2023_vs_2022 | 2024_vs_2023 | 2025_vs_2024
-    result = pivot.reset_index()
-    
-    for col_name, growth_series in growth_cols.items():
-        result[col_name] = growth_series.values
-    
-    # Format growth columns as percentages (rounded to 1 decimal)
-    for col in result.columns:
-        if "_Growth" in str(col):
-            result[col] = result[col].round(1)
-    
-    return result, float("nan")
+        pivot = pivot.reset_index()
+    else:
+        # No entity dimension, just a single row with totals per year
+        pivot = grouped.pivot_table(
+            index=None,
+            columns=year_col,
+            values=total_col,
+            aggfunc="sum",
+            fill_value=0.0,
+        )
+        pivot = pivot.reset_index(drop=True)
+
+    # Normalise column names to strings
+    pivot.columns = [str(c) for c in pivot.columns]
+
+    # Add growth columns for consecutive year pairs
+    for i in range(1, len(years)):
+        prev_year = years[i - 1]
+        curr_year = years[i]
+        prev_col = str(prev_year)
+        curr_col = str(curr_year)
+        growth_col = f"{curr_year}_vs_{prev_year}_Growth"
+
+        if prev_col not in pivot.columns or curr_col not in pivot.columns:
+            continue
+
+        prev_vals = pivot[prev_col].replace({0: pd.NA})
+        growth = (pivot[curr_col] - pivot[prev_col]) / prev_vals * 100.0
+        pivot[growth_col] = growth.round(1)
+
+    return pivot, float("nan")
+
 
 def _calculate_wow_growth(
     df: pd.DataFrame,
@@ -1090,115 +1122,52 @@ def _calculate_wow_growth(
 ) -> Tuple[pd.DataFrame, float]:
     """
     Calculate week-over-week growth for each entity.
+
+    The result will have:
+      - one row per (entity..., week)
+      - a "WoW_Growth" column with % change vs previous week for that entity.
     """
-    print("\n✅ _calculate_wow_growth() CALLED")
-    print(f"  df.shape: {df.shape}")
-    print(f"  week_col: {week_col}")
-    print(f"  total_col: {total_col}")
-    print(f"  group_cols passed: {group_cols}")
-    print(f"  df.columns: {list(df.columns)}")
-    
     if df is None or df.empty:
-        print("  ⚠️ df is empty - returning None")
         return None, float("nan")
-    
-    if week_col not in df.columns:
-        print(f"  ⚠️ {week_col} not in df.columns - returning None")
+
+    if not week_col or week_col not in df.columns:
         return None, float("nan")
-    
-    if total_col not in df.columns:
-        print(f"  ⚠️ {total_col} not in df.columns - returning None")
+    if not total_col or total_col not in df.columns:
         return None, float("nan")
-    
-    # Entity columns are everything EXCEPT the week column
-    entity_cols = [c for c in group_cols if c != week_col]
-    print(f"  entity_cols: {entity_cols}")
-    
-    # Case A: No entity dimension (just weeks)
-    if not entity_cols:
-        print("  → Case A: No entity cols (just weeks)")
-        weekly = df.groupby(week_col, as_index=False)[total_col].sum()
-        weekly = weekly.sort_values(week_col)
-        weekly["WoW_Growth_%"] = weekly[total_col].pct_change() * 100
-        weekly["WoW_Growth_%"] = weekly["WoW_Growth_%"].round(1)
-        
-        weekly.columns = [str(c) for c in weekly.columns]
-        weekly = weekly.reset_index(drop=True)
-        
-        print(f"  Result shape: {weekly.shape}")
-        print(f"  Result columns: {list(weekly.columns)}")
-        return weekly, float("nan")
-    
-    # Case B: Entity + weeks
-    print("  → Case B: Entity + weeks")
-    print(f"    Looking for unique values in: {entity_cols}")
-    
-    result_rows = []
-    
-    # Get unique entity combinations
-    try:
-        unique_entities = df[entity_cols].drop_duplicates().values
-        print(f"    Found {len(unique_entities)} unique entities")
-    except Exception as e:
-        print(f"    ERROR getting unique entities: {e}")
-        return None, float("nan")
-    
-    for entity_vals in unique_entities:
-        # Filter to this specific entity
-        entity_mask = pd.Series(True, index=df.index)
-        for i, col in enumerate(entity_cols):
-            entity_mask &= (df[col] == entity_vals[i])
-        
-        entity_df = df[entity_mask].sort_values(week_col).copy()
-        
-        if entity_df.empty:
-            print(f"    Skipping entity {entity_vals} - no data")
-            continue
-        
-        print(f"    Processing entity {entity_vals}: {len(entity_df)} rows")
-        
-        # Group by week within this entity
-        entity_by_week = entity_df.groupby(week_col, as_index=False)[total_col].sum()
-        entity_by_week = entity_by_week.sort_values(week_col)
-        
-        # Calculate WoW growth
-        entity_by_week["WoW_Growth_%"] = entity_by_week[total_col].pct_change() * 100
-        
-        # Attach entity dimensions back
-        for i, col in enumerate(entity_cols):
-            entity_by_week[col] = entity_vals[i]
-        
-        result_rows.append(entity_by_week)
-    
-    if not result_rows:
-        print("  ⚠️ No result rows - returning None")
-        return None, float("nan")
-    
-    print(f"  Concatenating {len(result_rows)} result rows")
-    result = pd.concat(result_rows, ignore_index=True)
-    result["WoW_Growth_%"] = result["WoW_Growth_%"].round(1)
-    
-    # Reorder columns: entities first, then week, then metrics
-    cols_order = entity_cols + [week_col, total_col, "WoW_Growth_%"]
-    result = result[[c for c in cols_order if c in result.columns]]
-    
-    # Ensure all columns are strings
-    result.columns = [str(c) for c in result.columns]
-    
-    # Reset index
-    result = result.reset_index(drop=True)
-    
-    # Ensure numeric columns
-    if week_col in result.columns:
-        result[week_col] = pd.to_numeric(result[week_col], errors='coerce').fillna(0).astype(int)
-    if total_col in result.columns:
-        result[total_col] = pd.to_numeric(result[total_col], errors='coerce').fillna(0).astype(int)
-    
-    print(f"  Final result shape: {result.shape}")
-    print(f"  Final columns: {list(result.columns)}")
-    print(f"  First 3 rows:\n{result.head(3)}")
-    
-    return result, float("nan")
+
+    df = df.copy()
+    df[total_col] = pd.to_numeric(df[total_col], errors="coerce").fillna(0.0)
+
+    # Entity columns = all grouping columns except the week itself
+    entity_cols = [c for c in (group_cols or []) if c and c != week_col]
+
+    # Group to get weekly totals per entity
+    group_keys = (entity_cols or []) + [week_col]
+    grouped = (
+        df
+        .groupby(group_keys, as_index=False)[total_col]
+        .sum()
+    )
+
+    # Sort by entity keys + week so pct_change runs in week order
+    sort_keys = entity_cols + [week_col]
+    grouped = grouped.sort_values(sort_keys)
+
+    # Compute week-over-week growth per entity
+    if entity_cols:
+        grouped["WoW_Growth"] = (
+            grouped
+            .groupby(entity_cols)[total_col]
+            .pct_change() * 100.0
+        )
+    else:
+        grouped["WoW_Growth"] = grouped[total_col].pct_change() * 100.0
+
+    grouped["WoW_Growth"] = grouped["WoW_Growth"].round(1)
+
+    return grouped, float("nan")
+
+
 # =========================
 # Metadata relevance config
 # =========================
@@ -1435,15 +1404,15 @@ def _run_aggregation(
     base_df = df_filtered
     mapping = _get_mapping(base_df)
     total_col = mapping.get("total_mci")
-    
+
     if not total_col or total_col not in base_df.columns:
         return None, float("nan")
 
     aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
     group_by = spec.get("group_by") or []
-    
+
     group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
-    
+
     debug_msg = f"""
 🔴 _run_aggregation() DEBUG:
   aggregation: {aggregation}
@@ -1453,27 +1422,30 @@ def _run_aggregation(
   base_df.shape: {base_df.shape}
   time_window.mode: {spec.get('time_window', {}).get('mode')}
 """
-    
+
     # ------------------------------------------------------------------
-    # GROWTH RATE - NOW ACTUALLY IMPLEMENTED
+    # GROWTH RATE (WoW / YoY)
     # ------------------------------------------------------------------
     if aggregation == "growth_rate":
         debug_msg += "\n✅ GROWTH_RATE aggregation detected\n"
-        
-        # Determine if this is week-over-week or year-over-year
+
         time_window = spec.get("time_window") or {}
         compare = spec.get("compare") or {}
-        
+
         debug_msg += f"  time_window.mode: {time_window.get('mode')}\n"
-        debug_msg += f"  Case 1 check: time_window.mode in dynamic list = {time_window.get('mode') in ('last_n_weeks', 'anchored_last_n_weeks')}\n"
-        
-        # Case 1: Dynamic week window (last N weeks, etc.) → WoW
+
+        # Recompute group_cols inside here in case spec was tweaked
+        group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
+
+        # ---------------------------------------------
+        # Case 1: Dynamic week window → always WoW
+        # (e.g. “last 8 weeks”, “last_n_weeks”)
+        # ---------------------------------------------
         if time_window.get("mode") in ("last_n_weeks", "anchored_last_n_weeks"):
-            debug_msg += "  → MATCHED Case 1: Dynamic week window\n"
-            if "Week" in base_df.columns:
-                week_col = mapping.get("week")
-                debug_msg += f"    week_col: {week_col}, Calling _calculate_wow_growth()\n"
-                
+            debug_msg += "  → MATCHED Case 1: Dynamic week window (WoW)\n"
+            week_col = mapping.get("week")
+            debug_msg += f"    week_col: {week_col}\n"
+            if week_col and week_col in base_df.columns:
                 group_df, overall_val = _calculate_wow_growth(
                     base_df, spec, group_cols, week_col, total_col
                 )
@@ -1481,49 +1453,57 @@ def _run_aggregation(
                 st.write(debug_msg)
                 return group_df, overall_val
             else:
-                debug_msg += f"    'Week' NOT in base_df.columns\n"
-        
-        # Case 2: Time-to-time comparison (period A vs B) → growth between periods
-        period_a = compare.get("period_a")
-        period_b = compare.get("period_b")
-        if period_a and period_b:
-            debug_msg += "  → MATCHED Case 2: Period A vs Period B\n"
-            # This would need custom logic to compare two specific periods
-            # For now, if we have year comparison, use YoY
-            if "Year" in base_df.columns and ("year" in group_by or not group_by):
-                year_col = mapping.get("year")
-                group_df, overall_val = _calculate_yoy_growth(
-                    base_df, spec, group_cols, year_col, total_col
-                )
-                st.write(debug_msg)
-                return group_df, overall_val
-        
-        # Case 3: Year-over-year (if Year in group_by) → YoY
-        if "year" in group_by and "Year" in base_df.columns:
-            debug_msg += "  → MATCHED Case 3: Year-over-year\n"
-            year_col = mapping.get("year")
-            group_df, overall_val = _calculate_yoy_growth(
-                base_df, spec, group_cols, year_col, total_col
-            )
-            st.write(debug_msg)
-            return group_df, overall_val
-        
-        # Case 4: Week-over-week (if Week in group_by) → WoW
-        if "week" in group_by and "Week" in base_df.columns:
-            debug_msg += "  → MATCHED Case 4: Week in group_by\n"
-            week_col = mapping.get("week")
+                debug_msg += "    ⚠️ week_col missing or not in base_df.columns\n"
+
+        # ---------------------------------------------
+        # Case 2: Explicit weekly grouping → WoW
+        # (e.g. “weekly growth”, “growth by week”)
+        # ---------------------------------------------
+        week_col = mapping.get("week")
+        if "week" in group_by and week_col and week_col in base_df.columns:
+            debug_msg += "  → MATCHED Case 2: Week in group_by (WoW)\n"
             debug_msg += f"    week_col: {week_col}\n"
             debug_msg += f"    group_cols: {group_cols}\n"
-            debug_msg += f"    Calling _calculate_wow_growth()\n"
-            
             group_df, overall_val = _calculate_wow_growth(
                 base_df, spec, group_cols, week_col, total_col
             )
             debug_msg += f"    Result shape: {group_df.shape if group_df is not None else None}\n"
             st.write(debug_msg)
             return group_df, overall_val
-        
+
+        # ---------------------------------------------
+        # Case 3: Year-over-year grouping → YoY
+        # (e.g. “growth per year”, “YoY growth”)
+        # ---------------------------------------------
+        year_col = mapping.get("year")
+        if "year" in group_by and year_col and year_col in base_df.columns:
+            debug_msg += "  → MATCHED Case 3: Year in group_by (YoY)\n"
+            debug_msg += f"    year_col: {year_col}\n"
+            group_df, overall_val = _calculate_yoy_growth(
+                base_df, spec, group_cols, year_col, total_col
+            )
+            debug_msg += f"    Result shape: {group_df.shape if group_df is not None else None}\n"
+            st.write(debug_msg)
+            return group_df, overall_val
+
+        # ---------------------------------------------
+        # Case 4: Period A vs B (if you set compare.period_a/b)
+        # For now we just fall back to YoY on the same DF if possible.
+        # ---------------------------------------------
+        period_a = compare.get("period_a")
+        period_b = compare.get("period_b")
+        if period_a and period_b and year_col and year_col in base_df.columns:
+            debug_msg += "  → MATCHED Case 4: Period A vs Period B (fallback YoY)\n"
+            group_df, overall_val = _calculate_yoy_growth(
+                base_df, spec, group_cols, year_col, total_col
+            )
+            debug_msg += f"    Result shape: {group_df.shape if group_df is not None else None}\n"
+            st.write(debug_msg)
+            return group_df, overall_val
+
+        # ---------------------------------------------
         # Fallback: no growth calculation possible
+        # ---------------------------------------------
         debug_msg += "  → ⚠️ NO CASE MATCHED FOR GROWTH_RATE\n"
         st.write(debug_msg)
         return None, float("nan")
@@ -1800,7 +1780,6 @@ def _run_aggregation(
 
         share = numerator / denominator
         return None, float(share)
-
 
 def _build_chart_block(
     group_df: pd.DataFrame,
