@@ -1112,7 +1112,6 @@ def _calculate_yoy_growth(
 
     return pivot, float("nan")
 
-
 def _calculate_wow_growth(
     df: pd.DataFrame,
     spec: Dict[str, Any],
@@ -1166,7 +1165,6 @@ def _calculate_wow_growth(
     grouped["WoW_Growth"] = grouped["WoW_Growth"].round(1)
 
     return grouped, float("nan")
-
 
 # =========================
 # Metadata relevance config
@@ -1388,7 +1386,6 @@ def _build_metadata_snippet(df_filtered: pd.DataFrame, spec: Dict[str, Any]) -> 
         bullets += "\n- … (additional events exist for these weeks but are not shown here)"
 
     return intro + bullets
-
 def _run_aggregation(
     df_filtered: pd.DataFrame,
     spec: Dict[str, Any],
@@ -1439,7 +1436,6 @@ def _run_aggregation(
 
         # ---------------------------------------------
         # Case 1: Dynamic week window → always WoW
-        # (e.g. “last 8 weeks”, “last_n_weeks”)
         # ---------------------------------------------
         if time_window.get("mode") in ("last_n_weeks", "anchored_last_n_weeks"):
             debug_msg += "  → MATCHED Case 1: Dynamic week window (WoW)\n"
@@ -1457,7 +1453,6 @@ def _run_aggregation(
 
         # ---------------------------------------------
         # Case 2: Explicit weekly grouping → WoW
-        # (e.g. “weekly growth”, “growth by week”)
         # ---------------------------------------------
         week_col = mapping.get("week")
         if "week" in group_by and week_col and week_col in base_df.columns:
@@ -1473,7 +1468,6 @@ def _run_aggregation(
 
         # ---------------------------------------------
         # Case 3: Year-over-year grouping → YoY
-        # (e.g. “growth per year”, “YoY growth”)
         # ---------------------------------------------
         year_col = mapping.get("year")
         if "year" in group_by and year_col and year_col in base_df.columns:
@@ -1487,8 +1481,7 @@ def _run_aggregation(
             return group_df, overall_val
 
         # ---------------------------------------------
-        # Case 4: Period A vs B (if you set compare.period_a/b)
-        # For now we just fall back to YoY on the same DF if possible.
+        # Case 4: Period A vs B → for now, YoY fallback if year is present
         # ---------------------------------------------
         period_a = compare.get("period_a")
         period_b = compare.get("period_b")
@@ -1780,6 +1773,7 @@ def _run_aggregation(
 
         share = numerator / denominator
         return None, float(share)
+
 
 def _build_chart_block(
     group_df: pd.DataFrame,
