@@ -2514,26 +2514,8 @@ def answer_question_from_df(
     except Exception:
         refined_answer = final_answer
 
-    # ===== ADD DEBUG INFO TO RESPONSE =====
-    debug_info = f"""
----
-**🔴 DEBUG INFO:**
-- aggregation: {aggregation}
-- group_by: {spec.get('group_by')}
-- group_df is None: {group_df is None}
-- group_df shape: {group_df.shape if group_df is not None else 'N/A'}
-- group_df columns: {list(group_df.columns) if group_df is not None else 'N/A'}
-- customer filter: {spec.get('filters', {}).get('customer')}
-- year filter: {spec.get('filters', {}).get('year')}
----
-"""
-    
     refined_answer += debug_info
-
-    print("\n" + "="*70)
-    print("DEBUG answer_question_from_df() END")
-    print("="*70 + "\n")
-    
+ 
     return refined_answer
 # -------------------------
 # Dynamic week window logic
