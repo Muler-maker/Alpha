@@ -1653,6 +1653,18 @@ def _run_aggregation(
         if not proj_col or proj_col not in df_filtered.columns:
             return None, float("nan")
 
+        # ✅ If the user asked "per week", prefer the activity/projection week
+        #    rather than the production "Week" column.
+        if "week" in group_by and "Week number for Activity vs Projection" in df_filtered.columns:
+            new_group_cols: List[str] = []
+            for field in group_by:
+                if field == "week":
+                    # Use the activity/projection week as the real grouping column
+                    new_group_cols.append("Week number for Activity vs Projection")
+                elif mapping.get(field):
+                    new_group_cols.append(mapping[field])
+            group_cols = new_group_cols
+
         proj_keys = [
             c
             for c in [
@@ -1666,6 +1678,7 @@ def _run_aggregation(
 
         df_actual = df_filtered
         if proj_keys:
+            # One row per (Year, ProjWeek, Week number for Activity vs Projection, Distributor, Product)
             df_proj = df_filtered.drop_duplicates(subset=proj_keys)
         else:
             df_proj = df_filtered
@@ -1709,6 +1722,7 @@ def _run_aggregation(
 
         total_actual = float(merged["Actual_mCi"].sum())
         return merged, total_actual
+
 
     # ------------------------------------------------------------------
     # SUM (default)
