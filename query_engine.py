@@ -1790,35 +1790,51 @@ def _run_aggregation(
 
     aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
     group_by = spec.get("group_by") or []
+    
+    print("\n" + "="*70)
+    print("DEBUG _run_aggregation()")
+    print("="*70)
+    print(f"aggregation: {aggregation}")
+    print(f"group_by: {group_by}")
+    print(f"total_col: {total_col}")
+    print(f"base_df.shape: {base_df.shape}")
+    print("="*70 + "\n")
+    
     group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
 
     # ------------------------------------------------------------------
     # GROWTH RATE - NOW ACTUALLY IMPLEMENTED
     # ------------------------------------------------------------------
     if aggregation == "growth_rate":
+        print("✅ GROWTH_RATE aggregation detected")
+        
         # Determine if this is week-over-week or year-over-year
         time_window = spec.get("time_window") or {}
         compare = spec.get("compare") or {}
         
+        print(f"  time_window.mode: {time_window.get('mode')}")
+        print(f"  compare: {compare}")
+        
         # Case 1: Dynamic week window (last N weeks, etc.) → WoW
         if time_window.get("mode") in ("last_n_weeks", "anchored_last_n_weeks"):
+            print(f"  → Case 1: Dynamic week window")
             if "Week" in base_df.columns:
-                # ✅ CORRECT: Keep week + other entity dimensions
                 week_col = mapping.get("week")
-                # Include other dimensions (distributor, customer, product, etc.)
-                group_cols_wow = [mapping.get(field) for field in group_by 
-                                  if mapping.get(field) and mapping.get(field) != week_col]
-                # Pass week separately since it needs special handling
+                print(f"    week_col: {week_col}")
+                print(f"    group_cols: {group_cols}")
+                print(f"    Calling _calculate_wow_growth()")
                 
                 group_df, overall_val = _calculate_wow_growth(
                     base_df, spec, group_cols, week_col, total_col
                 )
+                print(f"    Result shape: {group_df.shape if group_df is not None else None}")
                 return group_df, overall_val
         
         # Case 2: Time-to-time comparison (period A vs B) → growth between periods
         period_a = compare.get("period_a")
         period_b = compare.get("period_b")
         if period_a and period_b:
+            print(f"  → Case 2: Period A vs Period B")
             # This would need custom logic to compare two specific periods
             # For now, if we have year comparison, use YoY
             if "Year" in base_df.columns and ("year" in group_by or not group_by):
@@ -1830,6 +1846,7 @@ def _run_aggregation(
         
         # Case 3: Year-over-year (if Year in group_by) → YoY
         if "year" in group_by and "Year" in base_df.columns:
+            print(f"  → Case 3: Year-over-year")
             year_col = mapping.get("year")
             group_df, overall_val = _calculate_yoy_growth(
                 base_df, spec, group_cols, year_col, total_col
@@ -1838,25 +1855,31 @@ def _run_aggregation(
         
         # Case 4: Week-over-week (if Week in group_by) → WoW
         if "week" in group_by and "Week" in base_df.columns:
+            print(f"  → Case 4: Week in group_by (weekly breakdown)")
             week_col = mapping.get("week")
+            print(f"    week_col: {week_col}")
+            print(f"    group_cols: {group_cols}")
+            print(f"    Calling _calculate_wow_growth()")
+            
             group_df, overall_val = _calculate_wow_growth(
                 base_df, spec, group_cols, week_col, total_col
             )
+            print(f"    Result shape: {group_df.shape if group_df is not None else None}")
             return group_df, overall_val
         
         # Fallback: no growth calculation possible
+        print(f"  → No growth case matched - returning None")
         return None, float("nan")
 
     # ------------------------------------------------------------------
     # COMPARE MODE (entity or time comparison)
     # ------------------------------------------------------------------
     if aggregation == "compare":
+        print("ℹ️ COMPARE aggregation")
         compare = spec.get("compare") or {}
         entities = compare.get("entities")
         entity_type = compare.get("entity_type")
 
-        # ... rest of compare logic unchanged ...
-        
         if entities and entity_type and entity_type not in ("product_sold", "product_catalogue"):
             entity_col = mapping.get(entity_type)
             if not entity_col or entity_col not in df_filtered.columns:
@@ -2062,6 +2085,7 @@ def _run_aggregation(
     # SUM (default)
     # ------------------------------------------------------------------
     if aggregation == "sum_mci":
+        print("ℹ️ SUM aggregation")
         total_mci = float(df_filtered[total_col].sum())
         if group_cols:
             grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
@@ -2073,6 +2097,7 @@ def _run_aggregation(
     # AVERAGE
     # ------------------------------------------------------------------
     if aggregation == "average_mci":
+        print("ℹ️ AVERAGE aggregation")
         if not group_cols:
             avg_val = float(df_filtered[total_col].mean())
             return None, avg_val
@@ -2086,6 +2111,7 @@ def _run_aggregation(
     # SHARE OF TOTAL
     # ------------------------------------------------------------------
     if aggregation == "share_of_total":
+        print("ℹ️ SHARE_OF_TOTAL aggregation")
         if group_cols:
             total = float(df_filtered[total_col].sum())
             if total == 0:
