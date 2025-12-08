@@ -1449,25 +1449,48 @@ def _calculate_wow_growth(
     Calculate week-over-week growth for each entity.
     Handles cases where we have both entity dimensions AND weeks.
     """
-    if df is None or df.empty or week_col not in df.columns:
+    print("✅ ENTERED _calculate_wow_growth")
+    print(f"DEBUG: week_col={week_col}, total_col={total_col}")
+    print(f"DEBUG: group_cols={group_cols}")
+    print(f"DEBUG: df.columns={list(df.columns)}")
+    print(f"DEBUG: df.shape={df.shape}")
+    
+    if df is None or df.empty:
+        print("⚠️ df is None or empty - returning None")
+        return None, float("nan")
+    
+    if week_col not in df.columns:
+        print(f"⚠️ {week_col} not in df.columns - returning None")
         return None, float("nan")
     
     # Entity columns are everything EXCEPT the week column
     entity_cols = [c for c in group_cols if c != week_col]
+    print(f"DEBUG: entity_cols={entity_cols}")
     
     # Case A: No entity dimension (just weeks)
     if not entity_cols:
+        print("INFO: No entity_cols - calculating simple weekly totals")
         weekly = df.groupby(week_col, as_index=False)[total_col].sum()
         weekly = weekly.sort_values(week_col)
         weekly["WoW_Growth_%"] = weekly[total_col].pct_change() * 100
         weekly["WoW_Growth_%"] = weekly["WoW_Growth_%"].round(1)
+        
+        # Ensure clean column names
+        weekly.columns = [str(c) for c in weekly.columns]
+        weekly = weekly.reset_index(drop=True)
+        
+        print(f"DEBUG: weekly result:\n{weekly}")
         return weekly, float("nan")
     
     # Case B: Entity + weeks (e.g., Distributor + Week, or Customer + Week)
-    # Group by entity first, then calculate week-over-week within each entity
+    print("INFO: Calculating WoW for each entity")
     result_rows = []
     
-    for entity_vals in df[entity_cols].drop_duplicates().values:
+    # Get unique entity combinations
+    unique_entities = df[entity_cols].drop_duplicates().values
+    print(f"DEBUG: Found {len(unique_entities)} unique entity combinations")
+    
+    for entity_vals in unique_entities:
         # Filter to this specific entity
         entity_mask = pd.Series(True, index=df.index)
         for i, col in enumerate(entity_cols):
@@ -1476,7 +1499,10 @@ def _calculate_wow_growth(
         entity_df = df[entity_mask].sort_values(week_col).copy()
         
         if entity_df.empty:
+            print(f"  Skipping entity {entity_vals} - no data")
             continue
+        
+        print(f"  Processing entity {entity_vals}: {len(entity_df)} rows")
         
         # Group by week within this entity
         entity_by_week = entity_df.groupby(week_col, as_index=False)[total_col].sum()
@@ -1492,14 +1518,34 @@ def _calculate_wow_growth(
         result_rows.append(entity_by_week)
     
     if not result_rows:
+        print("⚠️ No result rows - returning None")
         return None, float("nan")
     
+    print(f"DEBUG: Concatenating {len(result_rows)} result rows")
     result = pd.concat(result_rows, ignore_index=True)
     result["WoW_Growth_%"] = result["WoW_Growth_%"].round(1)
     
-    # Reorder columns: entities first, then week, then metrics
+    # ✅ CRITICAL: Reorder columns with EXPLICIT string names
     cols_order = entity_cols + [week_col, total_col, "WoW_Growth_%"]
     result = result[[c for c in cols_order if c in result.columns]]
+    
+    # ✅ CRITICAL: Ensure all columns are strings (not numeric indices)
+    result.columns = [str(c) for c in result.columns]
+    
+    # ✅ CRITICAL: Reset index to clean up any leftover indices
+    result = result.reset_index(drop=True)
+    
+    # ✅ CRITICAL: Ensure Week and Total_mCi columns are numeric for display
+    if week_col in result.columns:
+        result[week_col] = pd.to_numeric(result[week_col], errors='coerce').fillna(0).astype(int)
+    if total_col in result.columns:
+        result[total_col] = pd.to_numeric(result[total_col], errors='coerce').fillna(0).astype(int)
+    
+    print(f"DEBUG: Final result shape: {result.shape}")
+    print(f"DEBUG: Final columns: {list(result.columns)}")
+    print(f"DEBUG: Column dtypes:\n{result.dtypes}")
+    print(f"DEBUG: First 3 rows:\n{result.head(3)}")
+    print(f"DEBUG: Markdown output:\n{result.to_markdown(index=False)}")
     
     return result, float("nan")
 # =========================
