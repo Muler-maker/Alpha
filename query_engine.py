@@ -1412,387 +1412,429 @@ def _build_metadata_snippet(df_filtered: pd.DataFrame, spec: Dict[str, Any]) -> 
 
     return intro + bullets
 
-def _run_aggregation(
-    df_filtered: pd.DataFrame,
-    spec: Dict[str, Any],
-    full_df: Optional[pd.DataFrame] = None,
-) -> Tuple[Optional[pd.DataFrame], float]:
-    """
-    Run the specified aggregation (sum, average, share_of_total, growth_rate)
-    on the filtered data.
-    """
-    if df_filtered is None or not isinstance(df_filtered, pd.DataFrame) or df_filtered.empty:
-        return None, float("nan")
+def answer_question_from_df(
+    question: str,
+    consolidated_df: pd.DataFrame,
+    history: Optional[List[Dict[str, str]]] = None,
+    client=None,
+) -> str:
+    """Main function to interpret, execute, and answer a question from the DataFrame."""
+    if consolidated_df is None or consolidated_df.empty:
+        return "The consolidated data is empty. Please load data first."
 
-    base_df = df_filtered
-    mapping = _get_mapping(base_df)
-    total_col = mapping.get("total_mci")
+    print("\n" + "="*70)
+    print("DEBUG answer_question_from_df() START")
+    print("="*70)
+    print(f"Question: {question}")
     
-    if not total_col or total_col not in base_df.columns:
-        return None, float("nan")
+    # 1) Build & normalize the spec
+    spec = _interpret_question_with_llm(question, history=history)
 
-    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
+    print(f"\nAfter _interpret_question_with_llm():")
+    print(f"  aggregation: {spec.get('aggregation')}")
+    print(f"  group_by: {spec.get('group_by')}")
+    print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
+    print(f"  filters.year: {spec.get('filters', {}).get('year')}")
+    
+    # 🔧 Ensure we have explicit week/year if they appear in the question text
+    q_lower = (question or "").lower()
+    filters = spec.get("filters") or {}
+
+    # If LLM didn't set week, try to extract "week 35", "week 7", etc.
+    if not filters.get("week"):
+        m_week = re.search(r"\bweek\s+(\d{1,2})\b", q_lower)
+        if m_week:
+            filters["week"] = int(m_week.group(1))
+            print(f"  Extracted week from text: {filters['week']}")
+
+    # If LLM didn't set year, try to extract 2024, 2025, etc.
+    if not filters.get("year"):
+        m_year = re.search(r"\b(20[2-3][0-9])\b", q_lower)
+        if m_year:
+            filters["year"] = int(m_year.group(1))
+            print(f"  Extracted year from text: {filters['year']}")
+
+    spec["filters"] = filters  # keep attached to spec
+
+    # 🔧 Ensure we have a year for "why" questions with an explicit week but no year
+    if spec.get("_why_question") and filters.get("week") and not filters.get("year"):
+        if "Year" in consolidated_df.columns and not consolidated_df["Year"].dropna().empty:
+            filters["year"] = int(consolidated_df["Year"].max())
+
+    spec = _force_cancellation_status_from_text(question, spec)
+    spec = _ensure_all_statuses_when_grouped(spec)
+    spec = _inject_customer_from_question(consolidated_df, spec)
+    spec = _disambiguate_customer_vs_distributor(consolidated_df, spec)
+
+    # 🔧 Final fix for "why / reason / drop" style questions
+    if spec.get("_why_question"):
+        if spec.get("shipping_status_mode") in (None, "all"):
+            spec["shipping_status_mode"] = "countable"
+            spec["shipping_status_list"] = []
+
+        gb = spec.get("group_by") or []
+        if gb == ["shipping_status"]:
+            gb = []
+        elif "shipping_status" in gb and len(gb) > 1:
+            gb = [g for g in gb if g != "shipping_status"]
+        spec["group_by"] = gb
+
+    print(f"\nBefore _apply_filters():")
+    print(f"  aggregation: {spec.get('aggregation')}")
+    print(f"  group_by: {spec.get('group_by')}")
+    
+    # 2) Apply filters & run aggregation
+    df_filtered = _apply_filters(consolidated_df, spec)
+    
+    print(f"\nAfter _apply_filters():")
+    print(f"  df_filtered.shape: {df_filtered.shape if df_filtered is not None else None}")
+    
+    print(f"\nCalling _run_aggregation():")
+    print(f"  aggregation: {spec.get('aggregation')}")
+    
+    group_df, numeric_value = _run_aggregation(df_filtered, spec, consolidated_df)
+
+    print(f"\nAfter _run_aggregation():")
+    print(f"  group_df is None: {group_df is None}")
+    if group_df is not None:
+        print(f"  group_df.shape: {group_df.shape}")
+        print(f"  group_df.columns: {list(group_df.columns)}")
+        print(f"  group_df.dtypes:\n{group_df.dtypes}")
+        print(f"  First 3 rows:\n{group_df.head(3)}")
+    print(f"  numeric_value: {numeric_value}")
+    
+    # 3) Pivot-style reshaping for time dimensions
+    group_df = _reshape_for_display(group_df, spec)
+
+    # 4) Format numeric columns
+    if group_df is not None and not group_df.empty:
+        for col in group_df.columns:
+            col_lower = str(col).lower()
+            is_year_col = False
+            try:
+                is_year_col = str(int(col)) == str(col)
+            except Exception:
+                pass
+
+            if (
+                "mci" in col_lower
+                or "growthrate" in col_lower
+                or "abschange" in col_lower
+                or is_year_col
+            ):
+                try:
+                    group_df[col] = (
+                        pd.to_numeric(group_df[col], errors="coerce")
+                        .fillna(0)
+                        .round(0)
+                        .astype(int)
+                    )
+                except Exception:
+                    pass
+
+    # 5) If we have Year + Total_mCi, pivot so years are columns
     group_by = spec.get("group_by") or []
+    if (
+        group_df is not None
+        and not group_df.empty
+        and "Year" in group_df.columns
+        and "Total_mCi" in group_df.columns
+    ):
+        non_year_cols = [c for c in group_df.columns if c not in ("Year", "Total_mCi")]
+
+        if non_year_cols:
+            try:
+                pivot_df = group_df.pivot(
+                    index=non_year_cols,
+                    columns="Year",
+                    values="Total_mCi",
+                ).reset_index()
+                pivot_df.columns = [str(c) for c in pivot_df.columns]
+                group_df = pivot_df
+            except Exception:
+                pass
+        else:
+            years = sorted(group_df["Year"].unique())
+            wide = pd.DataFrame([{
+                str(y): float(
+                    group_df.loc[group_df["Year"] == y, "Total_mCi"].sum()
+                )
+                for y in years
+            }])
+            group_df = wide
+
+    # 6) One more pass of numeric formatting after pivot
+    if group_df is not None and not group_df.empty:
+        for col in group_df.columns:
+            col_lower = str(col).lower()
+            is_year_col = False
+            try:
+                is_year_col = str(int(col)) == str(col)
+            except Exception:
+                pass
+
+            if (
+                "mci" in col_lower
+                or "growthrate" in col_lower
+                or "abschange" in col_lower
+                or is_year_col
+            ):
+                try:
+                    group_df[col] = (
+                        pd.to_numeric(group_df[col], errors="coerce")
+                        .fillna(0)
+                        .round(0)
+                        .astype(int)
+                    )
+                except Exception:
+                    pass
+
+    # 7) Build human-readable filter description
+    filters = spec.get("filters", {}) or {}
+    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
     
-    group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
-    
-    debug_msg = f"""
-🔴 _run_aggregation() DEBUG:
-  aggregation: {aggregation}
-  group_by: {group_by}
-  group_cols: {group_cols}
-  total_col: {total_col}
-  base_df.shape: {base_df.shape}
-  time_window.mode: {spec.get('time_window', {}).get('mode')}
+    # ===== DEBUG: Add to core_answer early =====
+    spec_debug = f"""
+**SPEC DEBUG:**
+- aggregation: {aggregation}
+- group_by: {spec.get('group_by')}
+- filters.customer: {filters.get('customer')}
+- filters.year: {filters.get('year')}
+- time_window.mode: {spec.get('time_window', {}).get('mode')}
+- 'week' in group_by: {'week' in (spec.get('group_by') or [])}
+- 'Week' in df_filtered columns: {'Week' in (df_filtered.columns if df_filtered is not None else [])}
 """
-    
-    # ------------------------------------------------------------------
-    # GROWTH RATE - NOW ACTUALLY IMPLEMENTED
-    # ------------------------------------------------------------------
-    if aggregation == "growth_rate":
-        debug_msg += "\n✅ GROWTH_RATE aggregation detected\n"
-        
-        # Determine if this is week-over-week or year-over-year
-        time_window = spec.get("time_window") or {}
-        compare = spec.get("compare") or {}
-        
-        debug_msg += f"  time_window.mode: {time_window.get('mode')}\n"
-        debug_msg += f"  Case 1 check: time_window.mode in dynamic list = {time_window.get('mode') in ('last_n_weeks', 'anchored_last_n_weeks')}\n"
-        
-        # Case 1: Dynamic week window (last N weeks, etc.) → WoW
-        if time_window.get("mode") in ("last_n_weeks", "anchored_last_n_weeks"):
-            debug_msg += "  → MATCHED Case 1: Dynamic week window\n"
-            if "Week" in base_df.columns:
-                week_col = mapping.get("week")
-                debug_msg += f"    week_col: {week_col}, Calling _calculate_wow_growth()\n"
-                
-                group_df, overall_val = _calculate_wow_growth(
-                    base_df, spec, group_cols, week_col, total_col
-                )
-                debug_msg += f"    Result shape: {group_df.shape if group_df is not None else None}\n"
-                st.write(debug_msg)
-                return group_df, overall_val
-            else:
-                debug_msg += f"    'Week' NOT in base_df.columns\n"
-        
-        # Case 2: Time-to-time comparison (period A vs B) → growth between periods
-        period_a = compare.get("period_a")
-        period_b = compare.get("period_b")
-        if period_a and period_b:
-            debug_msg += "  → MATCHED Case 2: Period A vs Period B\n"
-            # This would need custom logic to compare two specific periods
-            # For now, if we have year comparison, use YoY
-            if "Year" in base_df.columns and ("year" in group_by or not group_by):
-                year_col = mapping.get("year")
-                group_df, overall_val = _calculate_yoy_growth(
-                    base_df, spec, group_cols, year_col, total_col
-                )
-                st.write(debug_msg)
-                return group_df, overall_val
-        
-        # Case 3: Year-over-year (if Year in group_by) → YoY
-        if "year" in group_by and "Year" in base_df.columns:
-            debug_msg += "  → MATCHED Case 3: Year-over-year\n"
-            year_col = mapping.get("year")
-            group_df, overall_val = _calculate_yoy_growth(
-                base_df, spec, group_cols, year_col, total_col
-            )
-            st.write(debug_msg)
-            return group_df, overall_val
-        
-        # Case 4: Week-over-week (if Week in group_by) → WoW
-        if "week" in group_by and "Week" in base_df.columns:
-            debug_msg += "  → MATCHED Case 4: Week in group_by\n"
-            week_col = mapping.get("week")
-            debug_msg += f"    week_col: {week_col}\n"
-            debug_msg += f"    group_cols: {group_cols}\n"
-            debug_msg += f"    Calling _calculate_wow_growth()\n"
-            
-            group_df, overall_val = _calculate_wow_growth(
-                base_df, spec, group_cols, week_col, total_col
-            )
-            debug_msg += f"    Result shape: {group_df.shape if group_df is not None else None}\n"
-            st.write(debug_msg)
-            return group_df, overall_val
-        
-        # Fallback: no growth calculation possible
-        debug_msg += "  → ⚠️ NO CASE MATCHED FOR GROWTH_RATE\n"
-        st.write(debug_msg)
-        return None, float("nan")
 
-    # ------------------------------------------------------------------
-    # COMPARE MODE (entity or time comparison)
-    # ------------------------------------------------------------------
-    if aggregation == "compare":
-        compare = spec.get("compare") or {}
-        entities = compare.get("entities")
-        entity_type = compare.get("entity_type")
+    parts = []
+    if filters.get("customer"):
+        parts.append(f"customer **{filters['customer']}**")
+    if filters.get("distributor"):
+        parts.append(f"distributor **{filters['distributor']}**")
+    if filters.get("country"):
+        parts.append(f"country **{filters['country']}**")
+    if filters.get("region"):
+        parts.append(f"region **{filters['region']}**")
+    if filters.get("year"):
+        parts.append(f"year **{filters['year']}**")
+    if filters.get("month"):
+        parts.append(f"month **{filters['month']}**")
+    if filters.get("quarter"):
+        parts.append(f"quarter **{filters['quarter']}**")
+    if filters.get("half_year"):
+        parts.append(f"half-year **{filters['half_year']}**")
+    if filters.get("product_sold"):
+        parts.append(f"product sold as **{filters['product_sold']}**")
+    if filters.get("product_catalogue"):
+        parts.append(f"product from catalogue **{filters['product_catalogue']}**")
+    if filters.get("production_site"):
+        parts.append(f"production site **{filters['production_site']}**")
 
-        if entities and entity_type and entity_type not in ("product_sold", "product_catalogue"):
-            entity_col = mapping.get(entity_type)
-            if not entity_col or entity_col not in df_filtered.columns:
-                return None, float("nan")
+    filter_text = ", ".join(parts) if parts else "all records"
 
-            def _match_entity(cell, target):
-                if pd.isna(cell):
-                    return False
-                return str(target).lower() in str(cell).lower()
+    ship_mode = spec.get("shipping_status_mode", "countable")
+    if ship_mode == "countable":
+        status_text = "countable orders (shipped, partially shipped, shipped late, or being processed)"
+    elif ship_mode == "cancelled":
+        status_text = "cancelled or rejected orders"
+    elif ship_mode == "explicit":
+        status_text = "orders with the specified shipping statuses"
+    else:
+        status_text = f"orders with '{ship_mode}' statuses"
 
-            rows = []
-            for ent in entities:
-                sub = df_filtered[df_filtered[entity_col].apply(lambda x: _match_entity(x, ent))]
-                if sub.empty:
-                    continue
-                sub = sub.copy()
-                sub["_CompareEntity"] = ent
-                rows.append(sub)
+    row_count = len(df_filtered) if df_filtered is not None else 0
 
-            if not rows:
-                return None, float("nan")
-
-            df_compare = pd.concat(rows, ignore_index=True)
-
-            extra_group_cols = [
-                mapping[g]
-                for g in group_by
-                if g != entity_type and mapping.get(g)
-            ]
-            group_cols_with_entity = (
-                ["_CompareEntity"] + extra_group_cols
-                if extra_group_cols
-                else ["_CompareEntity"]
-            )
-
-            grouped_df = df_compare.groupby(group_cols_with_entity, as_index=False)[total_col].sum()
-            grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
-            total_mci = float(df_compare[total_col].sum())
-            return grouped_df, total_mci
-
-        # Product comparison
-        if entities and entity_type in ("product_sold", "product_catalogue"):
-            prod_col = (
-                mapping.get("product_sold")
-                if entity_type == "product_sold"
-                else mapping.get("product_catalogue")
-            )
-            if not prod_col or prod_col not in df_filtered.columns:
-                return None, float("nan")
-
-            def _product_subset(df: pd.DataFrame, label: str) -> pd.DataFrame:
-                label = str(label).lower()
-                series = df[prod_col].astype(str).str.lower()
-
-                nca_like = (
-                    series.str.contains("n.c.a", regex=False)
-                    | series.str.contains(" nca", regex=False)
-                    | series.str.contains("non carrier", regex=False)
-                    | series.str.contains("non-carrier", regex=False)
-                )
-
-                ca_like_raw = (
-                    series.str.contains(" c.a", regex=False)
-                    | series.str.contains("(c.a", regex=False)
-                    | series.str.contains(" ca ", regex=False)
-                    | series.str.contains(" carrier added", regex=False)
-                )
-
-                terb_like = (
-                    series.str.contains("terb", regex=False)
-                    | series.str.contains("tb-161", regex=False)
-                    | series.str.contains("tb161", regex=False)
-                    | series.str.contains("161tb", regex=False)
-                )
-
-                if label == "nca":
-                    mask = nca_like & ~terb_like
-                    return df[mask]
-
-                if label == "ca":
-                    mask = ca_like_raw & ~nca_like & ~terb_like
-                    return df[mask]
-
-                return df[series.str.contains(label, na=False)]
-
-            rows: List[pd.DataFrame] = []
-            for ent in entities:
-                sub = _product_subset(df_filtered, ent)
-                if sub.empty:
-                    continue
-                sub = sub.copy()
-                sub["_CompareEntity"] = ent
-                rows.append(sub)
-
-            if not rows:
-                return None, float("nan")
-
-            df_compare = pd.concat(rows, ignore_index=True)
-
-            extra_group_cols = [
-                mapping[g]
-                for g in group_by
-                if g and mapping.get(g)
-            ]
-            group_cols_with_entity = (
-                ["_CompareEntity"] + extra_group_cols
-                if extra_group_cols
-                else ["_CompareEntity"]
-            )
-
-            grouped_df = df_compare.groupby(
-                group_cols_with_entity, as_index=False
-            )[total_col].sum()
-            grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
-            total_mci = float(df_compare[total_col].sum())
-            return grouped_df, total_mci
-
-        period_a = compare.get("period_a")
-        period_b = compare.get("period_b")
-        if period_a and period_b:
-            spec["aggregation"] = "growth_rate"
-            return _run_aggregation(df_filtered, spec, full_df)
-
-        if group_cols:
-            grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
-            grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
-            total_mci = float(df_filtered[total_col].sum())
-            return grouped_df, total_mci
-
-        total_mci = float(df_filtered[total_col].sum())
-        return None, total_mci
-
-    # ------------------------------------------------------------------
-    # PROJECTION VS ACTUAL
-    # ------------------------------------------------------------------
-    if aggregation == "projection_vs_actual":
-        actual_col = mapping.get("total_mci")
-        proj_col = mapping.get("proj_mci")
-
-        if not actual_col or actual_col not in df_filtered.columns:
-            return None, float("nan")
-        if not proj_col or proj_col not in df_filtered.columns:
-            return None, float("nan")
-
-        proj_keys = [
-            c
-            for c in [
-                "Year",
-                "ProjWeek",
-                "Week number for Activity vs Projection",
-                "Distributor",
-            ]
-            if c in df_filtered.columns
-        ]
-
-        df_actual = df_filtered
-        if proj_keys:
-            df_proj = df_filtered.drop_duplicates(subset=proj_keys)
-        else:
-            df_proj = df_filtered
-
-        if group_cols:
-            grp_actual = (
-                df_actual
-                .groupby(group_cols, as_index=False)[actual_col]
-                .sum()
-                .rename(columns={actual_col: "Actual_mCi"})
-            )
-
-            grp_proj = (
-                df_proj
-                .groupby(group_cols, as_index=False)[proj_col]
-                .sum()
-                .rename(columns={proj_col: "Projected_mCi"})
-            )
-
-            merged = pd.merge(grp_actual, grp_proj, on=group_cols, how="outer")
-        else:
-            actual_total = float(df_actual[actual_col].sum())
-            projected_total = float(df_proj[proj_col].sum())
-
-            merged = pd.DataFrame(
-                {
-                    "Actual_mCi": [actual_total],
-                    "Projected_mCi": [projected_total],
-                }
-            )
-
-        merged["Actual_mCi"] = merged["Actual_mCi"].fillna(0.0)
-        merged["Projected_mCi"] = merged["Projected_mCi"].fillna(0.0)
-        merged["Delta_mCi"] = merged["Actual_mCi"] - merged["Projected_mCi"]
-        merged["DeltaPct"] = merged.apply(
-            lambda r: (r["Delta_mCi"] / r["Projected_mCi"] * 100.0)
-            if r["Projected_mCi"] not in (0, 0.0)
-            else float("nan"),
-            axis=1,
+    # If we have NO table and the numeric value is NaN, it's a real error.
+    if group_df is None and (numeric_value is None or pd.isna(numeric_value)):
+        return (
+            "I couldn't compute the requested metric because there was no valid data "
+            "or the base period had zero activity.\n\n" + spec_debug
         )
 
-        total_actual = float(merged["Actual_mCi"].sum())
-        return merged, total_actual
+    # 8) Build the core textual answer by aggregation type
+    core_answer = ""
 
-    # ------------------------------------------------------------------
-    # SUM (default)
-    # ------------------------------------------------------------------
-    if aggregation == "sum_mci":
-        total_mci = float(df_filtered[total_col].sum())
-        if group_cols:
-            grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
-            grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
-            return grouped_df, total_mci
-        return None, total_mci
+    # SUM (and basic comparison tables)
+    if aggregation in ("sum_mci", "compare"):
+        if group_df is None:
+            core_answer = (
+                f"Based on {status_text} for {filter_text}, the total ordered amount is "
+                f"**{numeric_value:,.0f} mCi**, calculated from **{row_count}** rows."
+            )
+        else:
+            preview_md = group_df.to_markdown(index=False)
+            header = (
+                f"Here is a breakdown for {status_text} for {filter_text}. "
+                f"The total across all groups is **{numeric_value:,.0f} mCi** "
+                f"(from **{row_count}** rows).\n\n"
+            )
+            core_answer = header + preview_md
 
-    # ------------------------------------------------------------------
     # AVERAGE
-    # ------------------------------------------------------------------
-    if aggregation == "average_mci":
-        if not group_cols:
-            avg_val = float(df_filtered[total_col].mean())
-            return None, avg_val
+    elif aggregation == "average_mci":
+        if group_df is None:
+            core_answer = (
+                f"Based on {status_text} for {filter_text}, the **average ordered amount** per row is "
+                f"**{numeric_value:,.0f} mCi**, across **{row_count}** rows."
+            )
+        else:
+            preview_md = group_df.to_markdown(index=False)
+            header = (
+                f"Here is the **average ordered amount per group** for {status_text} for {filter_text}. "
+                f"The overall average across all rows is "
+                f"**{numeric_value:,.0f} mCi** (from **{row_count}** rows).\n\n"
+            )
+            core_answer = header + preview_md
 
-        grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].mean()
-        grouped_df = grouped_df.rename(columns={total_col: "Average_mCi"})
-        overall_avg = float(df_filtered[total_col].mean())
-        return grouped_df, overall_avg
-
-    # ------------------------------------------------------------------
     # SHARE OF TOTAL
-    # ------------------------------------------------------------------
-    if aggregation == "share_of_total":
-        if group_cols:
-            total = float(df_filtered[total_col].sum())
-            if total == 0:
-                spec["_share_debug"] = {"denominator": 0.0}
-                return None, float("nan")
+    elif aggregation == "share_of_total":
+        share_debug = spec.get("_share_debug", {}) or {}
+        if group_df is None:
+            share_pct = numeric_value * 100.0
+            num = share_debug.get("numerator")
+            den = share_debug.get("denominator")
 
-            grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
-            grouped_df["ShareOfTotal"] = grouped_df[total_col] / total
-            spec["_share_debug"] = {"denominator": total}
-            return grouped_df, float("nan")
+            if num is not None and den is not None and den != 0:
+                core_answer = (
+                    f"Based on {status_text} for {filter_text}, the ordered amount is "
+                    f"**{num:,.0f} mCi**, which represents **{share_pct:.1f}%** "
+                    f"of the corresponding total (**{den:,.0f} mCi**)."
+                )
+            else:
+                core_answer = (
+                    f"Based on {status_text} for {filter_text}, the share of total is "
+                    f"approximately **{share_pct:.1f}%**, but the denominator could not be fully validated."
+                )
+        else:
+            den = share_debug.get("denominator")
+            if den is not None and den != 0:
+                denom_txt = f"The total ordered amount (denominator) is **{den:,.0f} mCi**."
+            else:
+                denom_txt = "The total ordered amount (denominator) is derived from the current filters."
+            preview_md = group_df.to_markdown(index=False)
+            header = (
+                f"Here is the **share of total ordered amount per group** for {status_text} for {filter_text}. "
+                f"{denom_txt}\n\n"
+            )
+            core_answer = header + preview_md
 
-        if full_df is None or not isinstance(full_df, pd.DataFrame):
-            return None, float("nan")
+    # GROWTH RATE
+    elif aggregation == "growth_rate":
+        if group_df is None:
+            if numeric_value is None or pd.isna(numeric_value):
+                core_answer = (
+                    f"I couldn't compute a growth rate for {status_text} for {filter_text} "
+                    f"because there was no activity in the base period."
+                )
+            else:
+                pct = numeric_value * 100.0
+                core_answer = (
+                    f"Based on {status_text} for {filter_text}, the growth rate between the two periods "
+                    f"is approximately **{pct:.1f}%**."
+                )
+        else:
+            cols = list(group_df.columns)
 
-        numerator = float(df_filtered[total_col].sum())
-        base_spec = copy.deepcopy(spec)
-        base_filters = base_spec.get("filters", {}) or {}
+            # Week-over-week growth table
+            if "WoW_Growth_%" in cols:
+                preview_md = group_df.to_markdown(index=False)
 
-        for k in ["customer", "distributor", "country", "region"]:
-            base_filters[k] = None
-        base_spec["filters"] = base_filters
+                time_window = spec.get("time_window") or {}
+                n_weeks = time_window.get("n_weeks")
 
-        df_den = _apply_filters(full_df, base_spec)
-        if df_den is None or df_den.empty or total_col not in df_den.columns:
-            spec["_share_debug"] = {"numerator": numerator, "denominator": 0.0}
-            return None, float("nan")
+                if n_weeks:
+                    header = (
+                        f"Here is the **week-over-week growth** for the last **{n_weeks} weeks** "
+                        f"based on {status_text} for {filter_text}.\n\n"
+                    )
+                else:
+                    header = (
+                        f"Here is the **week-over-week growth** per group "
+                        f"based on {status_text} for {filter_text}.\n\n"
+                    )
 
-        denominator = float(df_den[total_col].sum())
-        spec["_share_debug"] = {"numerator": numerator, "denominator": denominator}
+                core_answer = header + preview_md
 
-        if denominator == 0:
-            return None, float("nan")
+            # Year-over-year growth table
+            elif "YoY_Growth" in cols:
+                preview_md = group_df.to_markdown(index=False)
+                header = (
+                    f"Here is the **year-over-year growth** per group "
+                    f"based on {status_text} for {filter_text}.\n\n"
+                )
+                core_answer = header + preview_md
 
-        share = numerator / denominator
-        return None, float(share)
+            else:
+                preview_md = group_df.to_markdown(index=False)
+                core_answer = (
+                    f"Here is the **growth breakdown per group** for {status_text} for {filter_text}:\n\n"
+                    + preview_md
+                )
 
+    # Fallback
+    else:
+        if group_df is None:
+            core_answer = (
+                f"Based on {status_text} for {filter_text}, the value of the requested metric is "
+                f"**{numeric_value:,.0f}** across **{row_count}** rows."
+            )
+        else:
+            preview_md = group_df.to_markdown(index=False)
+            core_answer = (
+                f"Here is the breakdown of the requested metric for {status_text} for {filter_text}:\n\n"
+                + preview_md
+            )
+
+    # 9) Optionally add metadata snippet
+    meta_block = None
+    try:
+        if _should_include_metadata(spec):
+            meta_block = _build_metadata_snippet(df_filtered, spec)
+    except NameError:
+        meta_block = None
+
+    # 10) Optionally add chart block
+    chart_block = None
+    try:
+        if group_df is not None and not group_df.empty:
+            chart_block = _build_chart_block(group_df, spec, aggregation)
+    except NameError:
+        chart_block = None
+
+    final_answer = core_answer
+
+    if meta_block:
+        final_answer += meta_block
+
+    if chart_block:
+        final_answer += "\n\n" + chart_block
+
+    # Optional refinement pass
+    try:
+        refined_answer = _refine_answer_text(client, final_answer, question)
+    except Exception:
+        refined_answer = final_answer
+
+    # ===== ADD DEBUG INFO TO RESPONSE =====
+    debug_info = f"""
+---
+**🔴 DEBUG INFO:**
+- aggregation: {aggregation}
+- group_by: {spec.get('group_by')}
+- group_df is None: {group_df is None}
+- group_df shape: {group_df.shape if group_df is not None else 'N/A'}
+- group_df columns: {list(group_df.columns) if group_df is not None else 'N/A'}
+- customer filter: {spec.get('filters', {}).get('customer')}
+- year filter: {spec.get('filters', {}).get('year')}
+---
+"""
+    
+    refined_answer += debug_info
+
+    print("\n" + "="*70)
+    print("DEBUG answer_question_from_df() END")
+    print("="*70 + "\n")
+    
+    return refined_answer
 
 def _build_chart_block(
     group_df: pd.DataFrame,
