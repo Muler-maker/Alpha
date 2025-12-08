@@ -2496,6 +2496,21 @@ def answer_question_from_df(
 
     if chart_block:
         final_answer += "\n\n" + chart_block
+
+    # Optional refinement pass
+    try:
+        refined_answer = _refine_answer_text(client, final_answer, question)
+    except Exception:
+        refined_answer = final_answer
+
+    # ===== ADD DEBUG INFO TO RESPONSE =====
+
+    
+    refined_answer += debug_info
+
+    print("\n" + "="*70)
+    print("DEBUG answer_question_from_df() END")
+    print("="*70 + "\n")
     
     return refined_answer
 # -------------------------
