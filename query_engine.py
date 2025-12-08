@@ -711,34 +711,39 @@ def _normalize_product_filters(spec: Dict[str, Any], question: str) -> Dict[str,
 
 def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Try to infer a *customer* filter from the question text, but only when the
-    question clearly talks about customers / hospitals / clinics.
-
-    This avoids confusing short tokens like 'DSD' that appear in both
-    distributor and customer names.
+    Try to infer a *customer* filter from the question text.
+    This is more aggressive - looks for ANY entity name in the data that matches.
     """
     filters = spec.get("filters") or {}
-    # If the LLM already set a customer, don't touch it
+    
+    # If the LLM already set a customer, don't override it
     if filters.get("customer"):
+        print(f"  Customer already set: {filters['customer']}")
         return spec
 
     question = (spec.get("_question_text") or "").lower()
-
-    # Only try to auto-detect a *customer* when the user explicitly refers
-    # to customers, hospitals, clinics, etc.
-    wants_customer = any(
-        kw in question
-        for kw in ["customer", "customers", "hospital", "clinic", "centre", "center", "hospitals", "clinics"]
-    )
-    if not wants_customer:
-        return spec
+    print(f"  Trying to extract customer from: {question}")
 
     if "Customer" not in df.columns:
+        print(f"  'Customer' column not in df")
         return spec
 
-    unique_customers = [str(x) for x in df["Customer"].dropna().unique()]
-    q_tokens = [t for t in question.replace(",", " ").split() if len(t) > 3]
-
+    unique_customers = [str(x).strip() for x in df["Customer"].dropna().unique()]
+    print(f"  Unique customers in data: {unique_customers[:5]}...")  # Show first 5
+    
+    # Try exact match first (case-insensitive)
+    for cust in unique_customers:
+        cust_lower = cust.lower()
+        if cust_lower in question:
+            print(f"  ✅ FOUND exact match: {cust}")
+            filters["customer"] = cust
+            spec["filters"] = filters
+            return spec
+    
+    # Try partial match
+    q_tokens = [t.strip() for t in question.replace(",", " ").split() if len(t.strip()) > 2]
+    print(f"  Question tokens: {q_tokens}")
+    
     best_match = None
     best_score = 0
 
@@ -746,19 +751,22 @@ def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Di
         cust_lower = cust.lower()
         score = 0
         for tok in q_tokens:
-            if tok in cust_lower:
+            if tok in cust_lower or cust_lower in tok:
                 score += 1
         if score > best_score:
             best_score = score
             best_match = cust
+            print(f"    Candidate: {cust} (score: {score})")
 
-    # require at least 1 token match to avoid random noise
+    # Require at least 1 token match to avoid random noise
     if best_match and best_score > 0:
+        print(f"  ✅ FOUND partial match: {best_match} (score: {best_score})")
         filters["customer"] = best_match
         spec["filters"] = filters
-
+        return spec
+    
+    print(f"  ❌ No customer match found")
     return spec
-
 # --------------------------------------------------------------------
 # 2) EXECUTION LAYER – run the spec on the consolidated DataFrame
 # --------------------------------------------------------------------
