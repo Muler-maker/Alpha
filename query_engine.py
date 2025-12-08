@@ -411,7 +411,24 @@ ALWAYS:
             spec["_why_week"] = week_val
             if year_str:
                 spec["_why_year"] = int(year_str)
+    # ---------------------------------------------------------
+    # Heuristic fix: questions mentioning "DSD" refer to the
+    # DSD distributor, not to a specific customer.
+    # ---------------------------------------------------------
+    q_lower = (question or "").lower()
+    filters = spec.get("filters") or {}
 
+    if "dsd" in q_lower:
+        # Clear any (wrong) customer filter the LLM might have set
+        if filters.get("customer"):
+            filters["customer"] = None
+
+        # If no distributor filter is set yet, assume DSD distributor
+        if not filters.get("distributor"):
+            # "DSD" is enough – _apply_filters uses .str.contains()
+            filters["distributor"] = "DSD"
+
+    spec["filters"] = filters
     return spec
 
 
