@@ -1438,7 +1438,6 @@ def _calculate_yoy_growth(
     
     return result, float("nan")
 
-
 def _calculate_wow_growth(
     df: pd.DataFrame,
     spec: Dict[str, Any],
@@ -1446,46 +1445,61 @@ def _calculate_wow_growth(
     week_col: str,
     total_col: str,
 ) -> Tuple[pd.DataFrame, float]:
-
-    print("✅ ENTERED _calculate_wow_growth")
-    print("DEBUG columns:", list(df.columns))
-    print("DEBUG total_col:", total_col)   
-
-    # rest of your existing logic follows
-
     """
     Calculate week-over-week growth for each entity.
+    Handles cases where we have both entity dimensions AND weeks.
     """
-    if df is None or df.empty:
+    if df is None or df.empty or week_col not in df.columns:
         return None, float("nan")
     
+    # Entity columns are everything EXCEPT the week column
     entity_cols = [c for c in group_cols if c != week_col]
     
+    # Case A: No entity dimension (just weeks)
     if not entity_cols:
-        # Just weeks -> simple WoW table
         weekly = df.groupby(week_col, as_index=False)[total_col].sum()
         weekly = weekly.sort_values(week_col)
-        weekly["WoW_Growth"] = weekly[total_col].pct_change() * 100
-        weekly["WoW_Growth"] = weekly["WoW_Growth"].round(1)
+        weekly["WoW_Growth_%"] = weekly[total_col].pct_change() * 100
+        weekly["WoW_Growth_%"] = weekly["WoW_Growth_%"].round(1)
         return weekly, float("nan")
     
-    # Group by entity + week
-    grouped = df.groupby(entity_cols + [week_col], as_index=False)[total_col].sum()
-    
-    # For each entity, calculate week-over-week growth
+    # Case B: Entity + weeks (e.g., Distributor + Week, or Customer + Week)
+    # Group by entity first, then calculate week-over-week within each entity
     result_rows = []
     
-    for entity_vals in grouped[entity_cols].drop_duplicates().values:
-        entity_filter = True
+    for entity_vals in df[entity_cols].drop_duplicates().values:
+        # Filter to this specific entity
+        entity_mask = pd.Series(True, index=df.index)
         for i, col in enumerate(entity_cols):
-            entity_filter &= (grouped[col] == entity_vals[i])
+            entity_mask &= (df[col] == entity_vals[i])
         
-        entity_data = grouped[entity_filter].sort_values(week_col)
-        entity_data["WoW_Growth"] = entity_data[total_col].pct_change() * 100
-        result_rows.append(entity_data)
+        entity_df = df[entity_mask].sort_values(week_col).copy()
+        
+        if entity_df.empty:
+            continue
+        
+        # Group by week within this entity
+        entity_by_week = entity_df.groupby(week_col, as_index=False)[total_col].sum()
+        entity_by_week = entity_by_week.sort_values(week_col)
+        
+        # Calculate WoW growth
+        entity_by_week["WoW_Growth_%"] = entity_by_week[total_col].pct_change() * 100
+        
+        # Attach entity dimensions back
+        for i, col in enumerate(entity_cols):
+            entity_by_week[col] = entity_vals[i]
+        
+        result_rows.append(entity_by_week)
+    
+    if not result_rows:
+        return None, float("nan")
     
     result = pd.concat(result_rows, ignore_index=True)
-    result["WoW_Growth"] = result["WoW_Growth"].round(1)
+    result["WoW_Growth_%"] = result["WoW_Growth_%"].round(1)
+    
+    # Reorder columns: entities first, then week, then metrics
+    cols_order = entity_cols + [week_col, total_col, "WoW_Growth_%"]
+    result = result[[c for c in cols_order if c in result.columns]]
     
     return result, float("nan")
 # =========================
@@ -1743,10 +1757,12 @@ def _run_aggregation(
         # Case 1: Dynamic week window (last N weeks, etc.) → WoW
         if time_window.get("mode") in ("last_n_weeks", "anchored_last_n_weeks"):
             if "Week" in base_df.columns:
-                # Group by week (and any other dimensions like product, distributor)
-                group_cols_wow = [mapping.get(field) for field in group_by 
-                                  if mapping.get(field) and field != "week"]
+                # ✅ CORRECT: Keep week + other entity dimensions
                 week_col = mapping.get("week")
+                # Include other dimensions (distributor, customer, product, etc.)
+                group_cols_wow = [mapping.get(field) for field in group_by 
+                                  if mapping.get(field) and mapping.get(field) != week_col]
+                # Pass week separately since it needs special handling
                 
                 group_df, overall_val = _calculate_wow_growth(
                     base_df, spec, group_cols, week_col, total_col
@@ -2240,6 +2256,11 @@ def _reshape_for_display(group_df: pd.DataFrame, spec: Dict[str, Any]) -> pd.Dat
     if group_df is None or group_df.empty:
         return group_df
 
+    # ✅ NEW: Don't pivot growth rate tables - they need row format
+    aggregation = spec.get("aggregation", "sum_mci")
+    if aggregation == "growth_rate":
+        return group_df  # Return as-is for growth calculations
+
     df = group_df.copy()
 
     # Identify time dimensions
@@ -2295,6 +2316,7 @@ def _reshape_for_display(group_df: pd.DataFrame, spec: Dict[str, Any]) -> pd.Dat
 
     pivot_df.columns = [str(c) for c in pivot_df.columns]
     return pivot_df
+    
 def _refine_answer_text(
     client,
     raw_answer: str,
