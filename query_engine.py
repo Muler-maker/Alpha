@@ -2081,9 +2081,20 @@ def answer_question_from_df(
     if consolidated_df is None or consolidated_df.empty:
         return "The consolidated data is empty. Please load data first."
 
+    print("\n" + "="*70)
+    print("DEBUG answer_question_from_df() START")
+    print("="*70)
+    print(f"Question: {question}")
+    
     # 1) Build & normalize the spec
     spec = _interpret_question_with_llm(question, history=history)
 
+    print(f"\nAfter _interpret_question_with_llm():")
+    print(f"  aggregation: {spec.get('aggregation')}")
+    print(f"  group_by: {spec.get('group_by')}")
+    print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
+    print(f"  filters.year: {spec.get('filters', {}).get('year')}")
+    
     # 🔧 Ensure we have explicit week/year if they appear in the question text
     q_lower = (question or "").lower()
     filters = spec.get("filters") or {}
@@ -2093,12 +2104,14 @@ def answer_question_from_df(
         m_week = re.search(r"\bweek\s+(\d{1,2})\b", q_lower)
         if m_week:
             filters["week"] = int(m_week.group(1))
+            print(f"  Extracted week from text: {filters['week']}")
 
     # If LLM didn't set year, try to extract 2024, 2025, etc.
     if not filters.get("year"):
         m_year = re.search(r"\b(20[2-3][0-9])\b", q_lower)
         if m_year:
             filters["year"] = int(m_year.group(1))
+            print(f"  Extracted year from text: {filters['year']}")
 
     spec["filters"] = filters  # keep attached to spec
 
@@ -2112,15 +2125,12 @@ def answer_question_from_df(
     spec = _inject_customer_from_question(consolidated_df, spec)
     spec = _disambiguate_customer_vs_distributor(consolidated_df, spec)
 
-    # 🔧 Final fix for "why / reason / drop" style questions:
-    # make sure we use normal shipped volume and NOT a shipping-status breakdown.
+    # 🔧 Final fix for "why / reason / drop" style questions
     if spec.get("_why_question"):
-        # 1) Force countable statuses if LLM / helpers set "all"
         if spec.get("shipping_status_mode") in (None, "all"):
             spec["shipping_status_mode"] = "countable"
             spec["shipping_status_list"] = []
 
-        # 2) Remove shipping_status from group_by for explanation questions
         gb = spec.get("group_by") or []
         if gb == ["shipping_status"]:
             gb = []
@@ -2128,20 +2138,39 @@ def answer_question_from_df(
             gb = [g for g in gb if g != "shipping_status"]
         spec["group_by"] = gb
 
+    print(f"\nBefore _apply_filters():")
+    print(f"  aggregation: {spec.get('aggregation')}")
+    print(f"  group_by: {spec.get('group_by')}")
+    
     # 2) Apply filters & run aggregation
     df_filtered = _apply_filters(consolidated_df, spec)
+    
+    print(f"\nAfter _apply_filters():")
+    print(f"  df_filtered.shape: {df_filtered.shape if df_filtered is not None else None}")
+    
+    print(f"\nCalling _run_aggregation():")
+    print(f"  aggregation: {spec.get('aggregation')}")
+    
     group_df, numeric_value = _run_aggregation(df_filtered, spec, consolidated_df)
 
-    # 3) Pivot-style reshaping for time dimensions (Year / Week / Quarter / Half year / Month)
+    print(f"\nAfter _run_aggregation():")
+    print(f"  group_df is None: {group_df is None}")
+    if group_df is not None:
+        print(f"  group_df.shape: {group_df.shape}")
+        print(f"  group_df.columns: {list(group_df.columns)}")
+        print(f"  group_df.dtypes:\n{group_df.dtypes}")
+        print(f"  First 3 rows:\n{group_df.head(3)}")
+    print(f"  numeric_value: {numeric_value}")
+    
+    # 3) Pivot-style reshaping for time dimensions
     group_df = _reshape_for_display(group_df, spec)
 
-    # 4) Format numeric columns (no decimals / scientific notation)
+    # 4) Format numeric columns
     if group_df is not None and not group_df.empty:
         for col in group_df.columns:
             col_lower = str(col).lower()
             is_year_col = False
             try:
-                # If the column name is like "2024", int("2024") works and matches back
                 is_year_col = str(int(col)) == str(col)
             except Exception:
                 pass
@@ -2173,7 +2202,6 @@ def answer_question_from_df(
         non_year_cols = [c for c in group_df.columns if c not in ("Year", "Total_mCi")]
 
         if non_year_cols:
-            # e.g. Region x Year, Distributor x Year, Product x Year
             try:
                 pivot_df = group_df.pivot(
                     index=non_year_cols,
@@ -2185,7 +2213,6 @@ def answer_question_from_df(
             except Exception:
                 pass
         else:
-            # Only Year + Total_mCi → single row with years as columns
             years = sorted(group_df["Year"].unique())
             wide = pd.DataFrame([{
                 str(y): float(
@@ -2195,7 +2222,7 @@ def answer_question_from_df(
             }])
             group_df = wide
 
-    # 6) One more pass of numeric formatting after pivot reshaping
+    # 6) One more pass of numeric formatting after pivot
     if group_df is not None and not group_df.empty:
         for col in group_df.columns:
             col_lower = str(col).lower()
@@ -2264,11 +2291,10 @@ def answer_question_from_df(
     row_count = len(df_filtered) if df_filtered is not None else 0
 
     # If we have NO table and the numeric value is NaN, it's a real error.
-    # If we DO have a table (group_df), it's OK for numeric_value to be NaN.
     if group_df is None and (numeric_value is None or pd.isna(numeric_value)):
         return (
             "I couldn't compute the requested metric because there was no valid data "
-        "or the base period had zero activity."
+            "or the base period had zero activity."
         )
 
     # 8) Build the core textual answer by aggregation type
@@ -2338,12 +2364,9 @@ def answer_question_from_df(
             )
             core_answer = header + preview_md
 
-    # ------------------------------------------------------------------
     # GROWTH RATE
-    # ------------------------------------------------------------------
     elif aggregation == "growth_rate":
         if group_df is None:
-            # Single global / period-over-period growth number
             if numeric_value is None or pd.isna(numeric_value):
                 core_answer = (
                     f"I couldn't compute a growth rate for {status_text} for {filter_text} "
@@ -2358,8 +2381,8 @@ def answer_question_from_df(
         else:
             cols = list(group_df.columns)
 
-            # --- Option A: week-over-week growth table (from _calculate_wow_growth) ---
-            if "WoW_Growth" in cols:
+            # Week-over-week growth table
+            if "WoW_Growth_%" in cols:
                 preview_md = group_df.to_markdown(index=False)
 
                 time_window = spec.get("time_window") or {}
@@ -2378,16 +2401,15 @@ def answer_question_from_df(
 
                 core_answer = header + preview_md
 
-            # --- Period A vs Period B table (legacy / explicit compare phrasing) ---
-            elif "PeriodA_mCi" in cols and "PeriodB_mCi" in cols:
+            # Year-over-year growth table
+            elif "YoY_Growth" in cols:
                 preview_md = group_df.to_markdown(index=False)
-                core_answer = (
-                    f"Here is the **growth analysis per group** for {status_text} for {filter_text} "
-                    f"between period A and period B.\n\n"
-                    + preview_md
+                header = (
+                    f"Here is the **year-over-year growth** per group "
+                    f"based on {status_text} for {filter_text}.\n\n"
                 )
+                core_answer = header + preview_md
 
-            # --- Fallback: unknown growth-shaped table, just show it ---
             else:
                 preview_md = group_df.to_markdown(index=False)
                 core_answer = (
@@ -2395,7 +2417,7 @@ def answer_question_from_df(
                     + preview_md
                 )
 
-    # Fallback (includes projection_vs_actual, for now it will just show the table)
+    # Fallback
     else:
         if group_df is None:
             core_answer = (
@@ -2409,7 +2431,7 @@ def answer_question_from_df(
                 + preview_md
             )
 
-    # 9) Optionally add metadata snippet (below the main answer)
+    # 9) Optionally add metadata snippet
     meta_block = None
     try:
         if _should_include_metadata(spec):
@@ -2417,46 +2439,32 @@ def answer_question_from_df(
     except NameError:
         meta_block = None
 
-    # 10) Optionally add chart block (for bar / line / pie visualizations)
+    # 10) Optionally add chart block
     chart_block = None
     try:
         if group_df is not None and not group_df.empty:
             chart_block = _build_chart_block(group_df, spec, aggregation)
     except NameError:
         chart_block = None
-  # ========== DEBUG: Why no charts? ==========
-    print("\n" + "="*60)
-    print("DEBUG: Chart Generation Check")
-    print("="*60)
-    print(f"Question: {question}")
-    print(f"Aggregation: {aggregation}")
-    print(f"Group_by: {spec.get('group_by')}")
-    print(f"group_df is None: {group_df is None}")
-    if group_df is not None:
-        print(f"group_df is empty: {group_df.empty}")
-        print(f"group_df shape: {group_df.shape}")
-        print(f"group_df columns: {list(group_df.columns)}")
-        print(f"group_df head:\n{group_df.head()}")
-    else:
-        print("⚠️ group_df is None - NO CHART WILL BE GENERATED")
-    print("="*60 + "\n")
-    # ========== END DEBUG ==========
+
     final_answer = core_answer
 
-    # Metadata comes at the bottom of the textual answer
     if meta_block:
         final_answer += meta_block
 
-    # Chart block is appended so the frontend can detect ```chart ... ```
     if chart_block:
         final_answer += "\n\n" + chart_block
 
-    # 🔧 Optional refinement pass with GPT
+    # Optional refinement pass
     try:
         refined_answer = _refine_answer_text(client, final_answer, question)
     except Exception:
         refined_answer = final_answer
 
+    print("\n" + "="*70)
+    print("DEBUG answer_question_from_df() END")
+    print("="*70 + "\n")
+    
     return refined_answer
 
 # -------------------------
