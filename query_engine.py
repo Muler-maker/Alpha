@@ -712,27 +712,49 @@ def _augment_spec_with_date_heuristics(question: str, spec: Dict[str, Any]) -> D
 
 def _normalize_product_filters(spec: Dict[str, Any], question: str) -> Dict[str, Any]:
     """
-    Ensure we default to using the commercial 'product_sold' dimension
-    unless the user clearly asked about what was PRODUCED / MANUFACTURED.
+    Fix two issues:
+    1. Don't confuse distributor names (DSD, PI Medical) with product names
+    2. Default to 'product_sold' unless user asked about PRODUCED / MANUFACTURED
     """
     q = (question or "").lower()
     filters = spec.get("filters", {}) or {}
-
+    
     prod_sold = filters.get("product_sold")
     prod_cat = filters.get("product_catalogue")
-
+    
+    # Known distributor names that might be accidentally set as products
+    distributor_names = ["dsd", "pi medical", "pi med"]
+    
+    # ===== FIX 1: Clear distributor names from product filters =====
+    if prod_sold:
+        prod_lower = str(prod_sold).lower()
+        if any(dist in prod_lower for dist in distributor_names):
+            print(f"🔧 CLEARING product_sold (was distributor name): {prod_sold}")
+            filters["product_sold"] = None
+            prod_sold = None
+    
+    if prod_cat:
+        prod_lower = str(prod_cat).lower()
+        if any(dist in prod_lower for dist in distributor_names):
+            print(f"🔧 CLEARING product_catalogue (was distributor name): {prod_cat}")
+            filters["product_catalogue"] = None
+            prod_cat = None
+    
+    # ===== FIX 2: Normalize product dimension preference =====
     production_words = [
         "produce", "produced", "production", "manufacture", "manufactured", "batch"
     ]
     is_production_question = any(w in q for w in production_words)
-
+    
+    # If both are set and not a production question, prefer product_sold (commercial view)
     if prod_sold and prod_cat and not is_production_question:
         filters["product_catalogue"] = None
-
+    
+    # If only product_catalogue is set and not a production question, move it to product_sold
     if prod_cat and not prod_sold and not is_production_question:
         filters["product_sold"] = prod_cat
         filters["product_catalogue"] = None
-
+    
     spec["filters"] = filters
     return spec
 
@@ -2035,6 +2057,8 @@ def _disambiguate_customer_vs_distributor(df: pd.DataFrame, spec: Dict[str, Any]
 
     spec["filters"] = filters
     return spec
+    
+
 
 def _reshape_for_display(group_df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     """
@@ -2207,6 +2231,7 @@ def answer_question_from_df(
     spec = _ensure_all_statuses_when_grouped(spec)
     spec = _inject_customer_from_question(consolidated_df, spec)
     spec = _disambiguate_customer_vs_distributor(consolidated_df, spec)
+    spec = _normalize_product_filters(spec, question)
 
     # 🔧 Final fix for "why / reason / drop" style questions
     if spec.get("_why_question"):
