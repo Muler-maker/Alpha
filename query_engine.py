@@ -2,6 +2,7 @@ import os
 import json
 import re
 import copy
+import ast
 from typing import Dict, Any, List, Optional, Tuple
 
 import pandas as pd
@@ -1123,7 +1124,44 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
 
     # Distributor
     if filters.get("distributor") and mapping.get("distributor"):
-        result = result[contains(mapping["distributor"], filters["distributor"])]
+        dist_raw = filters["distributor"]
+        col = mapping["distributor"]
+
+        # If it's a string that *looks* like a Python list (e.g. "['DSD', 'PI medical']"),
+        # try to parse it into a real list
+        if isinstance(dist_raw, str):
+            dist_values = None
+            text = dist_raw.strip()
+            if text.startswith("[") and text.endswith("]"):
+                try:
+                    parsed = ast.literal_eval(text)
+                    if isinstance(parsed, list):
+                        dist_values = parsed
+                except Exception:
+                    dist_values = None
+            if dist_values is None:
+                # Single distributor string case (existing behavior)
+                result = result[contains(col, dist_raw)]
+            else:
+                # Multiple distributors in a list
+                mask = None
+                for d in dist_values:
+                    cur = contains(col, str(d))
+                    mask = cur if mask is None else (mask | cur)
+                result = result[mask]
+
+        elif isinstance(dist_raw, list):
+            # Already a proper list of distributors
+            mask = None
+            for d in dist_raw:
+                cur = contains(col, str(d))
+                mask = cur if mask is None else (mask | cur)
+            result = result[mask]
+
+        else:
+            # Fallback: treat as single value
+            result = result[contains(col, dist_raw)]
+
 
     # Year
     if filters.get("year") and mapping.get("year"):
