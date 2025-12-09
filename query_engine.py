@@ -2244,13 +2244,32 @@ def _disambiguate_customer_vs_distributor(df: pd.DataFrame, spec: Dict[str, Any]
 
 def _normalize_product_filters(spec: Dict[str, Any], question: str) -> Dict[str, Any]:
     """
-    Safety placeholder for product normalization.
-    Ensures spec['filters'] always exists.
+    Prevents non-product values (like distributor names) from being
+    misclassified as product filters.
     """
     filters = spec.get("filters") or {}
+
+    product_val = filters.get("product_sold") or filters.get("product_catalogue")
+
+    if product_val:
+        pv = str(product_val).lower()
+
+        # Very rough markers that indicate a REAL product, not a company name
+        isotope_markers = [
+            "lu", "lutetium", "177", "tb", "terbium",
+            "psma", "chloride", "n.c.a", "c.a"
+        ]
+
+        is_real_product = any(k in pv for k in isotope_markers)
+
+        if not is_real_product:
+            # DSD, PI Medical, etc → drop as product filters
+            print(f"🧹 Dropping invalid product filter: '{product_val}' (not a real product)")
+            filters.pop("product_sold", None)
+            filters.pop("product_catalogue", None)
+
     spec["filters"] = filters
     return spec
-
 
 def _reshape_for_display(group_df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     """
