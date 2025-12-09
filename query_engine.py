@@ -2278,10 +2278,20 @@ def answer_question_from_df(
     # 1) Build & normalize the spec
     spec = _interpret_question_with_llm(question, history=history)
 
+    print(f"\n" + "="*70)
+    print(f"🔧 DEBUG: After _interpret_question_with_llm()")
+    print(f"="*70)
+    print(f"Question: {question}")
+    print(f"Spec filters: {spec.get('filters')}")
+    print(f"Spec aggregation: {spec.get('aggregation')}")
+    print(f"Spec group_by: {spec.get('group_by')}")
+    print(f"="*70)
+
     print(f"\nAfter _interpret_question_with_llm():")
     print(f"  aggregation: {spec.get('aggregation')}")
     print(f"  group_by: {spec.get('group_by')}")
     print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
+    print(f"  filters.distributor: {spec.get('filters', {}).get('distributor')}")
     print(f"  filters.year: {spec.get('filters', {}).get('year')}")
     
     # 🔧 Ensure we have explicit week/year if they appear in the question text
@@ -2311,7 +2321,17 @@ def answer_question_from_df(
 
     spec = _force_cancellation_status_from_text(question, spec)
     spec = _ensure_all_statuses_when_grouped(spec)
+    
+    print(f"\n🔧 DEBUG: Before _inject_customer_from_question()")
+    print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
+    print(f"  filters.distributor: {spec.get('filters', {}).get('distributor')}")
+    
     spec = _inject_customer_from_question(consolidated_df, spec)
+    
+    print(f"\n🔧 DEBUG: After _inject_customer_from_question()")
+    print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
+    print(f"  filters.distributor: {spec.get('filters', {}).get('distributor')}")
+    
     spec = _disambiguate_customer_vs_distributor(consolidated_df, spec)
     spec = _normalize_product_filters(spec, question)
 
@@ -2333,12 +2353,6 @@ def answer_question_from_df(
     print(f"  group_by: {spec.get('group_by')}")
     
     # 2) Apply filters & run aggregation
-    # In answer_question_from_df(), find the _apply_filters() call around line 2200
-    # 
-    # BEFORE (current code):
-    #    df_filtered = _apply_filters(consolidated_df, spec)
-    #
-    # AFTER (add this check):
     # 🔧 FIX: For YoY growth, don't filter by a single year
     # We need BOTH years to calculate year-over-year growth
     spec_for_filtering = spec.copy()
@@ -2464,7 +2478,6 @@ def answer_question_from_df(
     filters = spec.get("filters", {}) or {}
     aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
     
-    # ===== DEBUG: Add to core_answer early =====
     parts = []
     if filters.get("customer"):
         parts.append(f"customer **{filters['customer']}**")
@@ -2502,11 +2515,6 @@ def answer_question_from_df(
         status_text = f"orders with '{ship_mode}' statuses"
 
     row_count = len(df_filtered) if df_filtered is not None else 0
-
- # FIND THIS SECTION in answer_question_from_df() around line 2370-2420
-# It starts with "# 8) Build the core textual answer by aggregation type"
-# 
-# Replace the entire growth rate handling section with this:
 
     # 8) Build the core textual answer by aggregation type
     core_answer = ""
@@ -2575,7 +2583,7 @@ def answer_question_from_df(
             )
             core_answer = header + preview_md
 
-    # GROWTH RATE - FIXED TO SHOW ALL ROWS
+    # GROWTH RATE
     elif aggregation == "growth_rate":
         if group_df is None:
             if numeric_value is None or pd.isna(numeric_value):
@@ -2622,7 +2630,7 @@ def answer_question_from_df(
                 core_answer = header + (preview_md or "")
 
             else:
-                # Fallback for other growth metrics - show all rows
+                # Fallback for other growth metrics
                 preview_md = group_df.to_markdown(index=False)
                 header = (
                     f"Here is the **growth breakdown per group** for {status_text} for {filter_text}:\n\n"
