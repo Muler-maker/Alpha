@@ -2305,6 +2305,7 @@ def _disambiguate_customer_vs_distributor(df: pd.DataFrame, spec: Dict[str, Any]
     spec["filters"] = filters
     return spec
 
+
 def _reshape_for_display(group_df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     """
     Reshape aggregated data into a more pivot-like layout when possible:
