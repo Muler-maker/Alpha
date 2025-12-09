@@ -1129,6 +1129,9 @@ def _calculate_yoy_growth(
 
     return pivot, float("nan")
 
+# FIXES for week-over-week (WoW) growth calculations
+# These are the corrected functions to replace in query_engine.py
+
 def _calculate_wow_growth(
     df: pd.DataFrame,
     spec: Dict[str, Any],
@@ -1138,17 +1141,20 @@ def _calculate_wow_growth(
 ) -> Tuple[pd.DataFrame, float]:
     """
     Calculate week-over-week growth for each entity.
-
-    The result will have:
-      - one row per (entity..., week)
-      - a "WoW_Growth" column with % change vs previous week for that entity.
+    
+    CRITICAL FIX: This returns results per (entity, week) with WoW_Growth column.
+    It does NOT require a "base period" - it computes growth for ALL weeks present.
     """
     if df is None or df.empty:
+        print("  âŒ _calculate_wow_growth: empty input df")
         return None, float("nan")
 
     if not week_col or week_col not in df.columns:
+        print(f"  âŒ _calculate_wow_growth: week_col '{week_col}' not in df.columns")
         return None, float("nan")
+    
     if not total_col or total_col not in df.columns:
+        print(f"  âŒ _calculate_wow_growth: total_col '{total_col}' not in df.columns")
         return None, float("nan")
 
     df = df.copy()
@@ -1156,30 +1162,49 @@ def _calculate_wow_growth(
 
     # Entity columns = all grouping columns except the week itself
     entity_cols = [c for c in (group_cols or []) if c and c != week_col]
+    
+    print(f"  âœ… WoW: entity_cols = {entity_cols}")
+    print(f"  âœ… WoW: week_col = {week_col}")
+    print(f"  âœ… WoW: total_col = {total_col}")
 
     # Group to get weekly totals per entity
     group_keys = (entity_cols or []) + [week_col]
+    print(f"  âœ… WoW: group_keys = {group_keys}")
+    
     grouped = (
         df
         .groupby(group_keys, as_index=False)[total_col]
         .sum()
     )
+    
+    print(f"  âœ… WoW: grouped.shape after groupby = {grouped.shape}")
+    print(f"  âœ… WoW: grouped.columns = {list(grouped.columns)}")
 
     # Sort by entity keys + week so pct_change runs in week order
     sort_keys = entity_cols + [week_col]
     grouped = grouped.sort_values(sort_keys)
 
+    print(f"  âœ… WoW: sorted {len(grouped)} rows by {sort_keys}")
+
     # Compute week-over-week growth per entity
     if entity_cols:
-        grouped["WoW_Growth"] = (
+        # For each entity, compute pct_change of total_col across weeks
+        grouped["WoW_Growth_%"] = (
             grouped
             .groupby(entity_cols)[total_col]
             .pct_change() * 100.0
         )
     else:
-        grouped["WoW_Growth"] = grouped[total_col].pct_change() * 100.0
+        # No entity dimension: just compute pct_change across weeks
+        grouped["WoW_Growth_%"] = grouped[total_col].pct_change() * 100.0
 
-    grouped["WoW_Growth"] = grouped["WoW_Growth"].round(1)
+    # Round to 1 decimal
+    grouped["WoW_Growth_%"] = grouped["WoW_Growth_%"].round(1)
+
+    # First row of each entity will be NaN (no previous week) - keep as NaN
+    
+    print(f"  âœ… WoW: final grouped.shape = {grouped.shape}")
+    print(f"  âœ… WoW: grouped columns = {list(grouped.columns)}")
 
     return grouped, float("nan")
 
