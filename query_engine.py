@@ -758,12 +758,20 @@ def _normalize_product_filters(spec: Dict[str, Any], question: str) -> Dict[str,
     spec["filters"] = filters
     return spec
 
+# Find and replace _inject_customer_from_question() with this version:
+
 def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
     """
     Try to infer a *customer* filter from the question text.
-    This is more aggressive - looks for ANY entity name in the data that matches.
+    BUT: Don't inject a customer if we already have a distributor filter set.
+    This prevents "Show me DSD growth rates" from matching a customer named "DSD".
     """
     filters = spec.get("filters") or {}
+    
+    # ===== NEW: If distributor is already set, don't try to find a customer =====
+    if filters.get("distributor"):
+        print(f"  📌 Distributor already set: {filters['distributor']} → skipping customer injection")
+        return spec
     
     # If the LLM already set a customer, don't override it
     if filters.get("customer"):
