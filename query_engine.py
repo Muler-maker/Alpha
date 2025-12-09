@@ -1121,44 +1121,44 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     # --------------------------------------------------------------------
 
     result = df.copy()
-# ✅ FIXED Distributor Filter (supports single + multi-entity correctly)
-if filters.get("distributor") and mapping.get("distributor"):
-    dist_val = filters["distributor"]
-    col = mapping["distributor"]
+    # ✅ FIXED Distributor Filter (supports single + multi-entity correctly)
+    if filters.get("distributor") and mapping.get("distributor"):
+        dist_val = filters["distributor"]
+        col = mapping["distributor"]
 
-    def _apply_multi_distributor(values):
-        mask = None
-        for v in values:
-            cur = result[col].astype(str).str.contains(str(v), case=False, na=False)
-            mask = cur if mask is None else (mask | cur)
-        return result[mask]
+        def _apply_multi_distributor(values):
+            mask = None
+            for v in values:
+                cur = result[col].astype(str).str.contains(str(v), case=False, na=False)
+                mask = cur if mask is None else (mask | cur)
+            return result[mask]
 
-    # Case 1: Proper Python list → ["DSD", "PI Medical"]
-    if isinstance(dist_val, list):
-        result = _apply_multi_distributor(dist_val)
+        # Case 1: Proper Python list → ["DSD", "PI Medical"]
+        if isinstance(dist_val, list):
+            result = _apply_multi_distributor(dist_val)
 
-    # Case 2: String that LOOKS like a list → "['DSD', 'PI Medical']"
-    elif isinstance(dist_val, str):
-        text = dist_val.strip()
+        # Case 2: String that LOOKS like a list → "['DSD', 'PI Medical']"
+        elif isinstance(dist_val, str):
+            text = dist_val.strip()
 
-        parsed_list = None
-        if text.startswith("[") and text.endswith("]"):
-            try:
-                parsed = ast.literal_eval(text)
-                if isinstance(parsed, list):
-                    parsed_list = parsed
-            except Exception:
-                parsed_list = None
+            parsed_list = None
+            if text.startswith("[") and text.endswith("]"):
+                try:
+                    parsed = ast.literal_eval(text)
+                    if isinstance(parsed, list):
+                        parsed_list = parsed
+                except Exception:
+                    parsed_list = None
 
-        if parsed_list:
-            result = _apply_multi_distributor(parsed_list)
+            if parsed_list:
+                result = _apply_multi_distributor(parsed_list)
+            else:
+                # ✅ Final fallback: single distributor string
+                result = result[result[col].astype(str).str.contains(text, case=False, na=False)]
+
+        # Case 3: Any other type → treat as single value safely
         else:
-            # ✅ Final fallback: single distributor string
-            result = result[result[col].astype(str).str.contains(text, case=False, na=False)]
-
-    # Case 3: Any other type → treat as single value safely
-    else:
-        result = result[result[col].astype(str).str.contains(str(dist_val), case=False, na=False)]
+            result = result[result[col].astype(str).str.contains(str(dist_val), case=False, na=False)]
 
     # Year
     if filters.get("year") and mapping.get("year"):
