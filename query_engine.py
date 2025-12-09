@@ -1122,16 +1122,30 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
 
     result = df.copy()
 
-    # Distributor
+       # Distributor
     if filters.get("distributor") and mapping.get("distributor"):
         dist_raw = filters["distributor"]
         col = mapping["distributor"]
 
-        # If it's a string that *looks* like a Python list (e.g. "['DSD', 'PI medical']"),
-        # try to parse it into a real list
-        if isinstance(dist_raw, str):
-            dist_values = None
+        # Helper: OR together multiple contains() masks
+        def _or_contains(values):
+            mask = None
+            for v in values:
+                cur = contains(col, str(v))
+                mask = cur if mask is None else (mask | cur)
+            return mask
+
+        # Case 1: already a Python list -> ["DSD", "PI medical"]
+        if isinstance(dist_raw, list):
+            mask = _or_contains(dist_raw)
+            result = result[mask]
+
+        # Case 2: a string – could be a single name or "['DSD', 'PI medical']"
+        elif isinstance(dist_raw, str):
             text = dist_raw.strip()
+            dist_values = None
+
+            # Try to parse list-like string with ast.literal_eval
             if text.startswith("[") and text.endswith("]"):
                 try:
                     parsed = ast.literal_eval(text)
@@ -1139,29 +1153,18 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
                         dist_values = parsed
                 except Exception:
                     dist_values = None
-            if dist_values is None:
-                # Single distributor string case (existing behavior)
-                result = result[contains(col, dist_raw)]
-            else:
-                # Multiple distributors in a list
-                mask = None
-                for d in dist_values:
-                    cur = contains(col, str(d))
-                    mask = cur if mask is None else (mask | cur)
-                result = result[mask]
 
-        elif isinstance(dist_raw, list):
-            # Already a proper list of distributors
-            mask = None
-            for d in dist_raw:
-                cur = contains(col, str(d))
-                mask = cur if mask is None else (mask | cur)
-            result = result[mask]
+            if dist_values:
+                # Parsed successfully into a list -> multi-distributor
+                mask = _or_contains(dist_values)
+                result = result[mask]
+            else:
+                # Plain single distributor string
+                result = result[contains(col, dist_raw)]
 
         else:
-            # Fallback: treat as single value
+            # Fallback: treat as a single value
             result = result[contains(col, dist_raw)]
-
 
     # Year
     if filters.get("year") and mapping.get("year"):
