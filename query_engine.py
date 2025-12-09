@@ -2151,158 +2151,106 @@ def _build_chart_block(
 # --------------------------------------------------------------------
 # 3) PUBLIC ENTRYPOINT – called from app.py
 # --------------------------------------------------------------------
-def _disambiguate_customer_vs_distributor(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Make a best-effort distinction between 'customer' and 'distributor'.
-
-    Rules:
-      - If question mentions 'distributor', prefer distributor filter.
-      - If question mentions 'customer' (and not 'distributor'), prefer customer filter.
-      - If a 'customer' value exactly matches a known distributor name, move it to distributor.
-    """
-    filters = spec.get("filters") or {}
-    question = (spec.get("_question_text") or "").lower()
-
-    customer_val = filters.get("customer")
-    distributor_val = filters.get("distributor")
-
-    # 1) Explicit language in question
-    mentions_distributor = "distributor" in question or "distributors" in question
-    mentions_customer = "customer" in question or "customers" in question
-
-    if mentions_distributor and not mentions_customer:
-        # Drop accidental customer
-        if distributor_val:
-            filters.pop("customer", None)
-        spec["filters"] = filters
-        return spec
-
-    if mentions_customer and not mentions_distributor:
-        # Drop accidental distributor
-        if customer_val:
-            filters.pop("distributor", None)
-        spec["filters"] = filters
-        return spec
-
-    # 2) No explicit language – try to fix obvious mis-assignments
-    #    e.g. 'DSD Pharma GmbH' being set as a customer, but is actually a distributor.
-    if "Distributor" in df.columns:
-        distributor_names = {str(x).strip().lower() for x in df["Distributor"].dropna().unique()}
-    else:
-        distributor_names = set()
-
-    if customer_val and not distributor_val:
-        cust_norm = str(customer_val).strip().lower()
-        if cust_norm in distributor_names:
-            # Move it from customer -> distributor
-            filters.pop("customer", None)
-            filters["distributor"] = customer_val
-            spec["filters"] = filters
-            return spec
-
-    spec["filters"] = filters
-    return spec
-    
-def _disambiguate_customer_vs_distributor(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Make a best-effort distinction between 'customer' and 'distributor'.
-
-    Rules:
-      - If question mentions 'distributor', prefer distributor filter.
-      - If question mentions 'customer' (and not 'distributor'), prefer customer filter.
-      - If a 'customer' value exactly matches a known distributor name, move it to distributor.
-    """
-    filters = spec.get("filters") or {}
-    question = (spec.get("_question_text") or "").lower()
-
-    customer_val = filters.get("customer")
-    distributor_val = filters.get("distributor")
-
-    # 1) Explicit language in question
-    mentions_distributor = "distributor" in question or "distributors" in question
-    mentions_customer = "customer" in question or "customers" in question
-
-    if mentions_distributor and not mentions_customer:
-        # Drop accidental customer
-        if distributor_val:
-            filters.pop("customer", None)
-        spec["filters"] = filters
-        return spec
-
-    if mentions_customer and not mentions_distributor:
-        # Drop accidental distributor
-        if customer_val:
-            filters.pop("distributor", None)
-        spec["filters"] = filters
-        return spec
-
-    # 2) No explicit language – try to fix obvious mis-assignments
-    #    e.g. 'DSD Pharma GmbH' being set as a customer, but is actually a distributor.
-    if "Distributor" in df.columns:
-        distributor_names = {str(x).strip().lower() for x in df["Distributor"].dropna().unique()}
-    else:
-        distributor_names = set()
-
-    if customer_val and not distributor_val:
-        cust_norm = str(customer_val).strip().lower()
-        if cust_norm in distributor_names:
-            # Move it from customer -> distributor
-            filters.pop("customer", None)
-            filters["distributor"] = customer_val
-            spec["filters"] = filters
-            return spec
-
-    spec["filters"] = filters
-    return spec
-
 def _normalize_entity_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
     """
     If a customer value actually exists in the distributor column,
-    move it to distributor. This fixes cases where the LLM or injection
-    logic misclassified a distributor as a customer.
-    
-    Also checks the reverse: if a distributor value is actually a customer.
+    move it to distributor. Also checks the reverse.
     """
     filters = spec.get("filters") or {}
-    
+
     # Build set of distributor names (normalized)
     if "Distributor" in df.columns:
         dist_names = {
-            str(x).strip().lower() 
+            str(x).strip().lower()
             for x in df["Distributor"].dropna().unique()
         }
     else:
         dist_names = set()
-    
+
     # Build set of customer names (normalized)
     if "Customer" in df.columns:
         cust_names = {
-            str(x).strip().lower() 
+            str(x).strip().lower()
             for x in df["Customer"].dropna().unique()
         }
     else:
         cust_names = set()
-    
+
     # Check if customer is actually a distributor
     cust_val = filters.get("customer")
     if cust_val:
         cust_lower = str(cust_val).strip().lower()
         if cust_lower in dist_names:
-            print(f"🔧 NORMALIZING: Moving '{cust_val}' from customer → distributor (found in Distributor column)")
+            print(f"🔧 NORMALIZING: Moving '{cust_val}' from customer → distributor")
             filters["distributor"] = cust_val
             filters["customer"] = None
-    
+
     # Check if distributor is actually a customer
     dist_val = filters.get("distributor")
     if dist_val:
         dist_lower = str(dist_val).strip().lower()
         if dist_lower in cust_names and dist_lower not in dist_names:
-            print(f"🔧 NORMALIZING: Moving '{dist_val}' from distributor → customer (found in Customer column only)")
+            print(f"🔧 NORMALIZING: Moving '{dist_val}' from distributor → customer")
             filters["customer"] = dist_val
             filters["distributor"] = None
-    
+
     spec["filters"] = filters
     return spec
+
+
+def _disambiguate_customer_vs_distributor(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Uses question language and known distributor names to decide
+    whether the entity should be treated as a customer or distributor.
+    """
+    filters = spec.get("filters") or {}
+    question = (spec.get("_question_text") or "").lower()
+
+    customer_val = filters.get("customer")
+    distributor_val = filters.get("distributor")
+
+    # 1) Explicit language in question
+    mentions_distributor = "distributor" in question or "distributors" in question
+    mentions_customer = "customer" in question or "customers" in question
+
+    if mentions_distributor and not mentions_customer:
+        filters.pop("customer", None)
+        spec["filters"] = filters
+        return spec
+
+    if mentions_customer and not mentions_distributor:
+        filters.pop("distributor", None)
+        spec["filters"] = filters
+        return spec
+
+    # 2) Fallback: customer value matches known distributor
+    if "Distributor" in df.columns:
+        distributor_names = {
+            str(x).strip().lower()
+            for x in df["Distributor"].dropna().unique()
+        }
+    else:
+        distributor_names = set()
+
+    if customer_val and not distributor_val:
+        cust_norm = str(customer_val).strip().lower()
+        if cust_norm in distributor_names:
+            filters.pop("customer", None)
+            filters["distributor"] = customer_val
+
+    spec["filters"] = filters
+    return spec
+
+
+def _normalize_product_filters(spec: Dict[str, Any], question: str) -> Dict[str, Any]:
+    """
+    Safety placeholder for product normalization.
+    Ensures spec['filters'] always exists.
+    """
+    filters = spec.get("filters") or {}
+    spec["filters"] = filters
+    return spec
+
 
 def _reshape_for_display(group_df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     """
