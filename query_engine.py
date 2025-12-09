@@ -109,7 +109,6 @@ def _get_mapping(df: pd.DataFrame) -> Dict[str, Optional[str]]:
 # --------------------------------------------------------------------
 # 1) INTERPRETATION LAYER – turn NL question → JSON spec
 # -----------------------
-
 def _interpret_question_with_llm(
     question: str,
     history: Optional[List[Dict[str, str]]] = None,
@@ -176,6 +175,9 @@ If the user asks for:
 - "weekly growth", "week-over-week", "WoW"
 - "yearly growth", "year-over-year", "YoY"
 - "how much did X grow"
+- "growth per week"
+- "growth by week"
+- "from 2024 to 2025" or "compared to 2024"
 
 THEN: aggregation = "growth_rate"
 
@@ -214,6 +216,7 @@ Set group_by for breakdowns:
 - "per country" → ["country"]
 - "per distributor" → ["distributor"]
 - "per customer" → ["customer"]
+- "per week" or "by week" or "weekly" → ["week"]
 - "weekly breakdown" → ["week"] or ["year", "week"]
 - Multiple dimensions allowed: ["customer", "year"], ["distributor", "product_sold"]
 
@@ -259,21 +262,19 @@ ALWAYS:
 
     # Always keep the raw question text for downstream helpers
     spec["_question_text"] = question
+    
     # Projection vs actual questions – LLM safety net
-    # -------------------------------
     proj_keywords = ["projection", "projections", "forecast", "budget", "plan"]
     actual_keywords = ["actual", "actuals", "vs", "versus", "variance", "gap"]
 
     if any(k in q_lower for k in proj_keywords) and any(k in q_lower for k in actual_keywords):
-        # Force the special projection_vs_actual aggregation so that
-        # _run_aggregation uses Proj_Amount vs Total_mCi
         spec["aggregation"] = "projection_vs_actual"
-
 
     # ===== CRITICAL FIX: Force growth_rate for growth-related questions =====
     growth_keywords = [
         "growth rate", "growth rates", "weekly growth", "week-over-week",
-        "wow", "yoy", "year-over-year", "yearly growth"
+        "wow", "yoy", "year-over-year", "yearly growth", "growth per week",
+        "growth by week"
     ]
     if any(kw in q_lower for kw in growth_keywords):
         print(f"🔴 FORCING growth_rate aggregation (detected keywords)")
@@ -281,20 +282,48 @@ ALWAYS:
         
         # Make sure we have the right group_by for time dimension
         gb = spec.get("group_by") or []
-        if "weekly" in q_lower or "week" in q_lower:
-            if "week" not in gb:
-                gb.append("week")
-            print(f"🔴 Added 'week' to group_by: {gb}")
-        elif "yearly" in q_lower or "year" in q_lower or "yoy" in q_lower:
+        
+        # ===== YEAR-OVER-YEAR: Check for year-to-year comparisons =====
+        yoy_patterns = [
+            "from 2024 to 2025",
+            "from 2023 to 2024",
+            "from 2025 to 2026",
+            "compared to 2024",
+            "compared to 2023",
+            "compared to 2025",
+            "vs 2024",
+            "vs 2023",
+            "vs 2025",
+            "versus 2024",
+            "versus 2023",
+            "versus 2025",
+            "year-over-year",
+            "yoy",
+            "yearly growth"
+        ]
+        
+        if any(pat in q_lower for pat in yoy_patterns):
+            print(f"🔴 DETECTED Year-over-Year pattern")
             if "year" not in gb:
                 gb.append("year")
-            print(f"🔴 Added 'year' to group_by: {gb}")
+                print(f"🔴 Added 'year' to group_by (YoY): {gb}")
+        
+        # ===== WEEK-OVER-WEEK: Check for weekly patterns =====
+        elif any(p in q_lower for p in ["per week", "by week", "weekly breakdown", "weekly"]):
+            print(f"🔴 DETECTED Week-over-Week pattern (per week language)")
+            if "week" not in gb:
+                gb.append("week")
+                print(f"🔴 Added 'week' to group_by (WoW): {gb}")
+        
+        elif any(w in q_lower for w in ["week-over-week", "wow"]):
+            print(f"🔴 DETECTED Week-over-Week pattern (WoW language)")
+            if "week" not in gb:
+                gb.append("week")
+                print(f"🔴 Added 'week' to group_by (WoW): {gb}")
         
         spec["group_by"] = gb
 
-    # -------------------------------
     # Distributor compare: DSD vs PI Medical
-    # -------------------------------
     if "compare" in q_lower and "dsd" in q_lower and "pi medical" in q_lower:
         spec["aggregation"] = "compare"
         compare = spec.get("compare") or {}
@@ -313,9 +342,7 @@ ALWAYS:
 
         spec["group_by"] = gb
 
-    # -------------------------------
     # Product compare: CA vs NCA
-    # -------------------------------
     if "compare" in q_lower and "ca" in q_lower and "nca" in q_lower:
         spec["aggregation"] = "compare"
         compare = spec.get("compare") or {}
@@ -334,9 +361,7 @@ ALWAYS:
 
         spec["group_by"] = gb
 
-    # -------------------------------
     # Mark "why / reason / drop" style questions
-    # -------------------------------
     why_keywords = ["why", "reason", "reasons", "cause", "drop", "decline", "decrease", "went down"]
     is_why = any(k in q_lower for k in why_keywords)
 
@@ -368,9 +393,7 @@ ALWAYS:
             gb = [g for g in gb if g != "shipping_status"]
         spec["group_by"] = gb
 
-    # -------------------------------
     # Global safety net: "per year" wording
-    # -------------------------------
     if any(t in q_lower for t in ["per year", "by year", "yearly", "each year", "in years"]):
         gb = spec.get("group_by") or []
         if "year" not in gb:
@@ -393,7 +416,7 @@ ALWAYS:
             except Exception:
                 pass
 
-    # 🔧 Hard override for "drop in week X (of Y)" style questions
+    # Hard override for "drop in week X (of Y)" style questions
     filters = spec.get("filters") or {}
     spec["filters"] = filters
 
@@ -411,10 +434,8 @@ ALWAYS:
             spec["_why_week"] = week_val
             if year_str:
                 spec["_why_year"] = int(year_str)
-    # ---------------------------------------------------------
-    # Heuristic fix: questions mentioning "DSD" refer to the
-    # DSD distributor, not to a specific customer.
-    # ---------------------------------------------------------
+    
+    # Heuristic fix: questions mentioning "DSD" refer to the DSD distributor
     q_lower = (question or "").lower()
     filters = spec.get("filters") or {}
 
@@ -425,12 +446,10 @@ ALWAYS:
 
         # If no distributor filter is set yet, assume DSD distributor
         if not filters.get("distributor"):
-            # "DSD" is enough – _apply_filters uses .str.contains()
             filters["distributor"] = "DSD"
 
     spec["filters"] = filters
     return spec
-
 
 def _interpret_question_fallback(
     question: str,
