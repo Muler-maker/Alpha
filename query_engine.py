@@ -778,15 +778,18 @@ def _normalize_entity_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[st
     spec["filters"] = filters
     return spec
 
-
-def _disambiguate_customer_vs_distributor(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
+def _disambiguate_customer_vs_distributor(
+    df: pd.DataFrame, spec: Dict[str, Any]
+) -> Dict[str, Any]:
     """
     Make a best-effort distinction between 'customer' and 'distributor'.
 
     Rules:
       - If question mentions 'distributor', prefer distributor filter.
       - If question mentions 'customer' (and not 'distributor'), prefer customer filter.
-      - If a 'customer' value exactly matches a known distributor name, move it to distributor.
+      - If a 'customer' value matches or nearly matches a known distributor name,
+        treat it as a distributor (especially important because projections live
+        at distributor level).
     """
     filters = spec.get("filters") or {}
     question = (spec.get("_question_text") or "").lower()
@@ -799,37 +802,102 @@ def _disambiguate_customer_vs_distributor(df: pd.DataFrame, spec: Dict[str, Any]
     mentions_customer = "customer" in question or "customers" in question
 
     if mentions_distributor and not mentions_customer:
-        # Drop accidental customer
+        # If we already have a distributor filter, drop any accidental customer
         if distributor_val:
             filters.pop("customer", None)
-        spec["filters"] = filters
-        return spec
+            spec["filters"] = filters
+            return spec
+        # If we DON'T have distributor_val yet, fall through so we can
+        # still promote customer -> distributor later.
 
     if mentions_customer and not mentions_distributor:
-        # Drop accidental distributor
+        # If we already have a customer filter, drop any accidental distributor
         if customer_val:
             filters.pop("distributor", None)
-        spec["filters"] = filters
-        return spec
+            spec["filters"] = filters
+            return spec
+        # If we DON'T have customer_val yet, fall through.
 
-    # 2) No explicit language – try to fix obvious mis-assignments
-    #    e.g. 'DSD Pharma GmbH' being set as a customer, but is actually a distributor.
+    # 2) Build distributor & customer name sets for normalization
+    dist_values: List[str] = []
     if "Distributor" in df.columns:
-        distributor_names = {str(x).strip().lower() for x in df["Distributor"].dropna().unique()}
+        dist_values = [str(x).strip() for x in df["Distributor"].dropna().unique()]
+        distributor_names = {d.lower() for d in dist_values}
     else:
         distributor_names = set()
 
+    cust_values: List[str] = []
+    if "Customer" in df.columns:
+        cust_values = [str(x).strip() for x in df["Customer"].dropna().unique()]
+        customer_names = {c.lower() for c in cust_values}
+    else:
+        customer_names = set()
+
+    # Helper for fuzzy token-based matching against distributors
+    def _best_distributor_match(name: str) -> Optional[str]:
+        name_norm = str(name).strip().lower()
+        name_tokens = {t for t in name_norm.replace("-", " ").split() if len(t) > 1}
+        if not name_tokens or not dist_values:
+            return None
+
+        best_match = None
+        best_score = 0
+
+        for dist in dist_values:
+            dist_tokens = {t for t in dist.lower().replace("-", " ").split() if len(t) > 1}
+            overlap = name_tokens & dist_tokens
+            score = len(overlap)
+            if score > best_score:
+                best_score = score
+                best_match = dist
+
+        return best_match if best_score > 0 else None
+
+    # 3) Customer → Distributor promotion (this is what fixes PI Medical)
     if customer_val and not distributor_val:
         cust_norm = str(customer_val).strip().lower()
+
+        # 3a) Exact match against distributor names
         if cust_norm in distributor_names:
-            # Move it from customer -> distributor
+            canonical = next(
+                (d for d in dist_values if d.lower() == cust_norm),
+                customer_val,
+            )
+            print(
+                f"🔧 NORMALIZING: Moving '{customer_val}' from customer → distributor "
+                f"(exact match: '{canonical}')"
+            )
             filters.pop("customer", None)
-            filters["distributor"] = customer_val
+            filters["distributor"] = canonical
             spec["filters"] = filters
             return spec
 
+        # 3b) Fuzzy match against distributor names (token overlap)
+        best_match = _best_distributor_match(customer_val)
+        if best_match:
+            print(
+                f"🔧 NORMALIZING: Treating customer '{customer_val}' as distributor '{best_match}' "
+                f"(token overlap)"
+            )
+            filters.pop("customer", None)
+            filters["distributor"] = best_match
+            spec["filters"] = filters
+            return spec
+
+    # 4) Distributor → Customer fallback (rare, but keep the original safety)
+    if distributor_val:
+        dist_norm = str(distributor_val).strip().lower()
+        if dist_norm in customer_names and dist_norm not in distributor_names:
+            print(
+                f"🔧 NORMALIZING: Moving '{distributor_val}' from distributor → customer "
+                "(found only in Customer column)"
+            )
+            filters["customer"] = distributor_val
+            filters["distributor"] = None
+
     spec["filters"] = filters
     return spec
+
 
 def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -1040,6 +1108,18 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     # Customer
     if filters.get("customer") and mapping.get("customer"):
         result = result[contains(mapping["customer"], filters["customer"])]
+    filters = spec.get("filters", {}) or {}
+
+    # --- NEW PROTECTION: avoid broken multi-entity distributor filters ---
+    dist_val = filters.get("distributor")
+    if isinstance(dist_val, str):
+        lv = dist_val.lower()
+        if (" vs " in lv or " and " in lv) and "dsd" in lv and "pi medical" in lv:
+            print(f"🧹 Dropping multi-entity distributor filter: '{dist_val}'")
+            filters["distributor"] = None
+    # --------------------------------------------------------------------
+
+    result = df.copy()
 
     # Distributor
     if filters.get("distributor") and mapping.get("distributor"):
