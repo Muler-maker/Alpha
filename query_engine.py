@@ -2323,6 +2323,170 @@ def _refine_answer_text(
         # Fail-safe: if refinement fails for any reason, fall back to raw answer
         return raw_answer
 
+def _normalize_entity_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    If a customer value actually exists in the distributor column,
+    move it to distributor. This fixes cases where the LLM or injection
+    logic misclassified a distributor as a customer.
+    
+    Also checks the reverse: if a distributor value is actually a customer.
+    """
+    filters = spec.get("filters") or {}
+    
+    # Build set of distributor names (normalized)
+    if "Distributor" in df.columns:
+        dist_names = {
+            str(x).strip().lower() 
+            for x in df["Distributor"].dropna().unique()
+        }
+    else:
+        dist_names = set()
+    
+    # Build set of customer names (normalized)
+    if "Customer" in df.columns:
+        cust_names = {
+            str(x).strip().lower() 
+            for x in df["Customer"].dropna().unique()
+        }
+    else:
+        cust_names = set()
+    
+    # Check if customer is actually a distributor
+    cust_val = filters.get("customer")
+    if cust_val:
+        cust_lower = str(cust_val).strip().lower()
+        if cust_lower in dist_names:
+            print(f"[NORMALIZE] Moving '{cust_val}' from customer to distributor")
+            filters["distributor"] = cust_val
+            filters["customer"] = None
+    
+    # Check if distributor is actually a customer
+    dist_val = filters.get("distributor")
+    if dist_val:
+        dist_lower = str(dist_val).strip().lower()
+        if dist_lower in cust_names and dist_lower not in dist_names:
+            print(f"[NORMALIZE] Moving '{dist_val}' from distributor to customer")
+            filters["customer"] = dist_val
+            filters["distributor"] = None
+    
+    spec["filters"] = filters
+    return spec
+
+
+def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Try to infer entity filters from the question text.
+    PRIORITY ORDER:
+    1. If distributor filter is already set, skip customer injection
+    2. Try to match as a DISTRIBUTOR first (check Distributor column) - AGGRESSIVE matching
+    3. Fall back to matching as a CUSTOMER (check Customer column)
+    """
+    filters = spec.get("filters") or {}
+    question = (spec.get("_question_text") or "").lower()
+    
+    print(f"\n[INJECT] Starting entity injection")
+    print(f"  Question: {question}")
+    
+    if "Distributor" in df.columns:
+        unique_distributors = [str(x).strip() for x in df["Distributor"].dropna().unique()]
+        print(f"  Found {len(unique_distributors)} unique distributors")
+    
+    if "Customer" in df.columns:
+        unique_customers = [str(x).strip() for x in df["Customer"].dropna().unique()]
+        print(f"  Found {len(unique_customers)} unique customers")
+    
+    # If distributor is already set, don't try to find a customer
+    if filters.get("distributor"):
+        print(f"  Distributor already set: {filters['distributor']}, skipping")
+        return spec
+    
+    # If customer is already set, don't override it
+    if filters.get("customer"):
+        print(f"  Customer already set: {filters['customer']}, skipping")
+        return spec
+
+    # ===== STEP 1: Try to match as DISTRIBUTOR (VERY AGGRESSIVE) =====
+    if "Distributor" in df.columns:
+        unique_distributors = [str(x).strip() for x in df["Distributor"].dropna().unique()]
+        
+        # Tokenize question into keywords
+        q_tokens = set(
+            t.strip().lower() 
+            for t in question.replace(",", " ").replace("'", "").split() 
+            if len(t.strip()) > 2
+        )
+        
+        # Try exact match first (case-insensitive)
+        for dist in unique_distributors:
+            dist_lower = dist.lower()
+            if dist_lower in question:
+                print(f"  [FOUND] Distributor (exact): {dist}")
+                filters["distributor"] = dist
+                spec["filters"] = filters
+                return spec
+        
+        # Try token-based matching (VERY LOOSE - any token overlap)
+        best_match = None
+        best_score = 0
+
+        for dist in unique_distributors:
+            dist_lower = dist.lower()
+            dist_tokens = set(dist_lower.split())
+            
+            # Count how many dist tokens appear in question tokens
+            overlap = dist_tokens & q_tokens
+            score = len(overlap)
+            
+            if score > best_score:
+                best_score = score
+                best_match = dist
+
+        if best_match and best_score > 0:
+            print(f"  [FOUND] Distributor (token match): {best_match}")
+            filters["distributor"] = best_match
+            spec["filters"] = filters
+            return spec
+
+    # ===== STEP 2: Fall back to matching as CUSTOMER =====
+    if "Customer" not in df.columns:
+        print(f"  No Customer column in df")
+        return spec
+
+    unique_customers = [str(x).strip() for x in df["Customer"].dropna().unique()]
+    
+    # Try exact match first (case-insensitive)
+    for cust in unique_customers:
+        cust_lower = cust.lower()
+        if cust_lower in question:
+            print(f"  [FOUND] Customer (exact): {cust}")
+            filters["customer"] = cust
+            spec["filters"] = filters
+            return spec
+    
+    # Try partial match
+    q_tokens = [t.strip() for t in question.replace(",", " ").split() if len(t.strip()) > 2]
+    best_match = None
+    best_score = 0
+
+    for cust in unique_customers:
+        cust_lower = cust.lower()
+        score = 0
+        for tok in q_tokens:
+            if tok in cust_lower or cust_lower in tok:
+                score += 1
+        if score > best_score:
+            best_score = score
+            best_match = cust
+
+    if best_match and best_score > 0:
+        print(f"  [FOUND] Customer (partial): {best_match}")
+        filters["customer"] = best_match
+        spec["filters"] = filters
+        return spec
+    
+    print(f"  [NOT FOUND] No entity match")
+    return spec
+
 def answer_question_from_df(
     question: str,
     consolidated_df: pd.DataFrame,
@@ -2341,23 +2505,14 @@ def answer_question_from_df(
     # 1) Build & normalize the spec
     spec = _interpret_question_with_llm(question, history=history)
 
-    print(f"\n" + "="*70)
-    print(f"🔧 DEBUG: After _interpret_question_with_llm()")
-    print(f"="*70)
-    print(f"Question: {question}")
-    print(f"Spec filters: {spec.get('filters')}")
-    print(f"Spec aggregation: {spec.get('aggregation')}")
-    print(f"Spec group_by: {spec.get('group_by')}")
-    print(f"="*70)
-
-    print(f"\nAfter _interpret_question_with_llm():")
+    print(f"\n[SPEC] After interpretation:")
     print(f"  aggregation: {spec.get('aggregation')}")
     print(f"  group_by: {spec.get('group_by')}")
     print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
     print(f"  filters.distributor: {spec.get('filters', {}).get('distributor')}")
     print(f"  filters.year: {spec.get('filters', {}).get('year')}")
     
-    # 🔧 Ensure we have explicit week/year if they appear in the question text
+    # Ensure we have explicit week/year if they appear in the question text
     q_lower = (question or "").lower()
     filters = spec.get("filters") or {}
 
@@ -2366,18 +2521,18 @@ def answer_question_from_df(
         m_week = re.search(r"\bweek\s+(\d{1,2})\b", q_lower)
         if m_week:
             filters["week"] = int(m_week.group(1))
-            print(f"  Extracted week from text: {filters['week']}")
+            print(f"  [EXTRACT] Week from text: {filters['week']}")
 
     # If LLM didn't set year, try to extract 2024, 2025, etc.
     if not filters.get("year"):
         m_year = re.search(r"\b(20[2-3][0-9])\b", q_lower)
         if m_year:
             filters["year"] = int(m_year.group(1))
-            print(f"  Extracted year from text: {filters['year']}")
+            print(f"  [EXTRACT] Year from text: {filters['year']}")
 
-    spec["filters"] = filters  # keep attached to spec
+    spec["filters"] = filters
 
-    # 🔧 Ensure we have a year for "why" questions with an explicit week but no year
+    # Ensure we have a year for "why" questions with an explicit week but no year
     if spec.get("_why_question") and filters.get("week") and not filters.get("year"):
         if "Year" in consolidated_df.columns and not consolidated_df["Year"].dropna().empty:
             filters["year"] = int(consolidated_df["Year"].max())
@@ -2385,27 +2540,20 @@ def answer_question_from_df(
     spec = _force_cancellation_status_from_text(question, spec)
     spec = _ensure_all_statuses_when_grouped(spec)
     
-    print(f"\nðŸ"§ DEBUG: Before _inject_customer_from_question()")
-    print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
-    print(f"  filters.distributor: {spec.get('filters', {}).get('distributor')}")
+    print(f"\n[ENTITY] Before entity processing:")
+    print(f"  customer: {spec.get('filters', {}).get('customer')}")
+    print(f"  distributor: {spec.get('filters', {}).get('distributor')}")
     
     spec = _inject_customer_from_question(consolidated_df, spec)
-    
-    print(f"\nðŸ"§ DEBUG: After _inject_customer_from_question()")
-    print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
-    print(f"  filters.distributor: {spec.get('filters', {}).get('distributor')}")
-    
-    # 🔧 NEW: Normalize entity filters (move customer to distributor if needed)
     spec = _normalize_entity_filters(consolidated_df, spec)
-    
-    print(f"\n🔧 DEBUG: After _normalize_entity_filters()")
-    print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
-    print(f"  filters.distributor: {spec.get('filters', {}).get('distributor')}")
-    
     spec = _disambiguate_customer_vs_distributor(consolidated_df, spec)
     spec = _normalize_product_filters(spec, question)
 
-    # 🔧 Final fix for "why / reason / drop" style questions
+    print(f"\n[ENTITY] After entity processing:")
+    print(f"  customer: {spec.get('filters', {}).get('customer')}")
+    print(f"  distributor: {spec.get('filters', {}).get('distributor')}")
+
+    # Final fix for "why / reason / drop" style questions
     if spec.get("_why_question"):
         if spec.get("shipping_status_mode") in (None, "all"):
             spec["shipping_status_mode"] = "countable"
@@ -2418,47 +2566,33 @@ def answer_question_from_df(
             gb = [g for g in gb if g != "shipping_status"]
         spec["group_by"] = gb
 
-    print(f"\nBefore _apply_filters():")
-    print(f"  aggregation: {spec.get('aggregation')}")
-    print(f"  group_by: {spec.get('group_by')}")
-    print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
-    print(f"  filters.distributor: {spec.get('filters', {}).get('distributor')}")
-    
     # 2) Apply filters & run aggregation
-    # 🔧 FIX: For YoY growth, don't filter by a single year
-    # We need BOTH years to calculate year-over-year growth
     spec_for_filtering = spec.copy()
     
     if spec.get("aggregation") == "growth_rate":
-        # Check if we're doing YoY (year in group_by)
         group_by = spec.get("group_by") or []
         if "year" in group_by:
-            # For YoY, clear the year filter so we get data from all years
             filters = spec_for_filtering.get("filters") or {}
             year_filter = filters.get("year")
             if year_filter:
-                print(f"🔧 YoY GROWTH: Clearing year filter {year_filter} to include all years")
+                print(f"[YoY] Clearing year filter to include all years")
                 filters["year"] = None
                 spec_for_filtering["filters"] = filters
     
     df_filtered = _apply_filters(consolidated_df, spec_for_filtering)
     
-    print(f"\nAfter _apply_filters():")
-    print(f"  df_filtered.shape: {df_filtered.shape if df_filtered is not None else None}")
-    
-    print(f"\nCalling _run_aggregation():")
-    print(f"  aggregation: {spec.get('aggregation')}")
+    print(f"\n[FILTER] After filtering:")
+    print(f"  rows returned: {len(df_filtered) if df_filtered is not None else 0}")
     
     group_df, numeric_value = _run_aggregation(df_filtered, spec, consolidated_df)
 
-    print(f"\nAfter _run_aggregation():")
-    print(f"  group_df is None: {group_df is None}")
+    print(f"\n[AGGREGATION] After aggregation:")
     if group_df is not None:
-        print(f"  group_df.shape: {group_df.shape}")
-        print(f"  group_df.columns: {list(group_df.columns)}")
-        print(f"  group_df.dtypes:\n{group_df.dtypes}")
-        print(f"  First 3 rows:\n{group_df.head(3)}")
-    print(f"  numeric_value: {numeric_value}")
+        print(f"  result shape: {group_df.shape}")
+        print(f"  columns: {list(group_df.columns)}")
+    else:
+        print(f"  result: None")
+    print(f"  numeric value: {numeric_value}")
     
     # 3) Pivot-style reshaping for time dimensions
     group_df = _reshape_for_display(group_df, spec)
@@ -2640,7 +2774,7 @@ def answer_question_from_df(
             else:
                 core_answer = (
                     f"Based on {status_text} for {filter_text}, the share of total is "
-                    f"approximately **{share_pct:.1f}%**, but the denominator could not be fully validated."
+                    f"approximately **{share_pct:.1f}%**."
                 )
         else:
             den = share_debug.get("denominator")
@@ -2660,14 +2794,13 @@ def answer_question_from_df(
         if group_df is None:
             if numeric_value is None or pd.isna(numeric_value):
                 core_answer = (
-                    f"I couldn't compute a growth rate for {status_text} for {filter_text} "
-                    f"because there was no activity in the base period."
+                    f"Could not compute a growth rate for {status_text} for {filter_text}."
                 )
             else:
                 pct = numeric_value * 100.0
                 core_answer = (
-                    f"Based on {status_text} for {filter_text}, the growth rate between the two periods "
-                    f"is approximately **{pct:.1f}%**."
+                    f"Based on {status_text} for {filter_text}, the growth rate is "
+                    f"**{pct:.1f}%**."
                 )
         else:
             cols = list(group_df.columns)
@@ -2675,52 +2808,49 @@ def answer_question_from_df(
             # Week-over-week growth table
             if "WoW_Growth_%" in cols:
                 preview_md = group_df.to_markdown(index=False)
-
                 time_window = spec.get("time_window") or {}
                 n_weeks = time_window.get("n_weeks")
 
                 if n_weeks:
                     header = (
-                        f"Here is the **week-over-week growth** for the last **{n_weeks} weeks** "
-                        f"based on {status_text} for {filter_text}.\n\n"
+                        f"Here is the **week-over-week growth** for the last {n_weeks} weeks "
+                        f"for {filter_text}.\n\n"
                     )
                 else:
                     header = (
-                        f"Here is the **week-over-week growth** per group "
-                        f"based on {status_text} for {filter_text}.\n\n"
+                        f"Here is the **week-over-week growth** "
+                        f"for {filter_text}.\n\n"
                     )
 
                 core_answer = header + (preview_md or "")
 
             # Year-over-year growth table
-            elif "YoY_Growth" in cols:
+            elif "YoY_Growth" in cols or any("vs" in str(c) and "Growth" in str(c) for c in cols):
                 preview_md = group_df.to_markdown(index=False)
                 header = (
-                    f"Here is the **year-over-year growth** per group "
-                    f"based on {status_text} for {filter_text}.\n\n"
+                    f"Here is the **year-over-year growth** "
+                    f"for {filter_text}.\n\n"
                 )
                 core_answer = header + (preview_md or "")
 
             else:
-                # Fallback for other growth metrics
                 preview_md = group_df.to_markdown(index=False)
                 header = (
-                    f"Here is the **growth breakdown per group** for {status_text} for {filter_text}:\n\n"
+                    f"Here is the **growth breakdown** for {filter_text}:\n\n"
                 )
-                
                 core_answer = header + (preview_md or "")
 
     # Fallback
     else:
         if group_df is None:
             core_answer = (
-                f"Based on {status_text} for {filter_text}, the value of the requested metric is "
-                f"**{numeric_value:,.0f}** across **{row_count}** rows."
+                f"Based on {status_text} for {filter_text}, "
+                f"the value is **{numeric_value:,.0f}** across **{row_count}** rows."
             )
         else:
             preview_md = group_df.to_markdown(index=False)
             core_answer = (
-                f"Here is the breakdown of the requested metric for {status_text} for {filter_text}:\n\n"
+                f"Here is the breakdown for {status_text} for {filter_text}:\n\n"
                 + preview_md
             )
 
