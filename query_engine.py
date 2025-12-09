@@ -779,11 +779,14 @@ def _normalize_product_filters(spec: Dict[str, Any], question: str) -> Dict[str,
 
 # Find and replace _inject_customer_from_question() with this version:
 
+# Replace the _inject_customer_from_question() function with this version:
+
 def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
     """
     Try to infer a *customer* filter from the question text.
-    BUT: Don't inject a customer if we already have a distributor filter set.
-    This prevents "Show me DSD growth rates" from matching a customer named "DSD".
+    BUT: Don't inject a customer if:
+    1. We already have a distributor filter set
+    2. The matched name is a known distributor (like DSD, PI Medical)
     """
     filters = spec.get("filters") or {}
     
@@ -804,12 +807,21 @@ def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Di
         print(f"  'Customer' column not in df")
         return spec
 
+    # ===== NEW: Known distributor names to avoid =====
+    known_distributors = ["dsd", "pi medical", "pi med"]
+    
     unique_customers = [str(x).strip() for x in df["Customer"].dropna().unique()]
     print(f"  Unique customers in data: {unique_customers[:5]}...")  # Show first 5
     
     # Try exact match first (case-insensitive)
     for cust in unique_customers:
         cust_lower = cust.lower()
+        
+        # Skip if this is a known distributor name
+        if any(dist in cust_lower for dist in known_distributors):
+            print(f"  ⏭️  Skipping '{cust}' (matches known distributor)")
+            continue
+            
         if cust_lower in question:
             print(f"  ✅ FOUND exact match: {cust}")
             filters["customer"] = cust
@@ -825,6 +837,12 @@ def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Di
 
     for cust in unique_customers:
         cust_lower = cust.lower()
+        
+        # Skip if this is a known distributor name
+        if any(dist in cust_lower for dist in known_distributors):
+            print(f"  ⏭️  Skipping '{cust}' (matches known distributor)")
+            continue
+        
         score = 0
         for tok in q_tokens:
             if tok in cust_lower or cust_lower in tok:
