@@ -2203,56 +2203,6 @@ def _disambiguate_customer_vs_distributor(df: pd.DataFrame, spec: Dict[str, Any]
     spec["filters"] = filters
     return spec
     
-def _normalize_entity_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    If a customer value actually exists in the distributor column,
-    move it to distributor. This fixes cases where the LLM or injection
-    logic misclassified a distributor as a customer.
-    
-    Also checks the reverse: if a distributor value is actually a customer.
-    """
-    filters = spec.get("filters") or {}
-    
-    # Build set of distributor names (normalized)
-    if "Distributor" in df.columns:
-        dist_names = {
-            str(x).strip().lower() 
-            for x in df["Distributor"].dropna().unique()
-        }
-    else:
-        dist_names = set()
-    
-    # Build set of customer names (normalized)
-    if "Customer" in df.columns:
-        cust_names = {
-            str(x).strip().lower() 
-            for x in df["Customer"].dropna().unique()
-        }
-    else:
-        cust_names = set()
-    
-    # Check if customer is actually a distributor
-    cust_val = filters.get("customer")
-    if cust_val:
-        cust_lower = str(cust_val).strip().lower()
-        if cust_lower in dist_names:
-            print(f"🔧 NORMALIZING: Moving '{cust_val}' from customer → distributor (found in Distributor column)")
-            filters["distributor"] = cust_val
-            filters["customer"] = None
-    
-    # Check if distributor is actually a customer
-    dist_val = filters.get("distributor")
-    if dist_val:
-        dist_lower = str(dist_val).strip().lower()
-        if dist_lower in cust_names and dist_lower not in dist_names:
-            print(f"🔧 NORMALIZING: Moving '{dist_val}' from distributor → customer (found in Customer column only)")
-            filters["customer"] = dist_val
-            filters["distributor"] = None
-    
-    spec["filters"] = filters
-    return spec
-
-
 def _disambiguate_customer_vs_distributor(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
     """
     Make a best-effort distinction between 'customer' and 'distributor'.
@@ -2305,6 +2255,54 @@ def _disambiguate_customer_vs_distributor(df: pd.DataFrame, spec: Dict[str, Any]
     spec["filters"] = filters
     return spec
 
+def _normalize_entity_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    If a customer value actually exists in the distributor column,
+    move it to distributor. This fixes cases where the LLM or injection
+    logic misclassified a distributor as a customer.
+    
+    Also checks the reverse: if a distributor value is actually a customer.
+    """
+    filters = spec.get("filters") or {}
+    
+    # Build set of distributor names (normalized)
+    if "Distributor" in df.columns:
+        dist_names = {
+            str(x).strip().lower() 
+            for x in df["Distributor"].dropna().unique()
+        }
+    else:
+        dist_names = set()
+    
+    # Build set of customer names (normalized)
+    if "Customer" in df.columns:
+        cust_names = {
+            str(x).strip().lower() 
+            for x in df["Customer"].dropna().unique()
+        }
+    else:
+        cust_names = set()
+    
+    # Check if customer is actually a distributor
+    cust_val = filters.get("customer")
+    if cust_val:
+        cust_lower = str(cust_val).strip().lower()
+        if cust_lower in dist_names:
+            print(f"🔧 NORMALIZING: Moving '{cust_val}' from customer → distributor (found in Distributor column)")
+            filters["distributor"] = cust_val
+            filters["customer"] = None
+    
+    # Check if distributor is actually a customer
+    dist_val = filters.get("distributor")
+    if dist_val:
+        dist_lower = str(dist_val).strip().lower()
+        if dist_lower in cust_names and dist_lower not in dist_names:
+            print(f"🔧 NORMALIZING: Moving '{dist_val}' from distributor → customer (found in Customer column only)")
+            filters["customer"] = dist_val
+            filters["distributor"] = None
+    
+    spec["filters"] = filters
+    return spec
 
 def _reshape_for_display(group_df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     """
