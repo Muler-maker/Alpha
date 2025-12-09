@@ -2278,7 +2278,29 @@ def answer_question_from_df(
     print(f"  group_by: {spec.get('group_by')}")
     
     # 2) Apply filters & run aggregation
-    df_filtered = _apply_filters(consolidated_df, spec)
+    # In answer_question_from_df(), find the _apply_filters() call around line 2200
+    # 
+    # BEFORE (current code):
+    #    df_filtered = _apply_filters(consolidated_df, spec)
+    #
+    # AFTER (add this check):
+    # 🔧 FIX: For YoY growth, don't filter by a single year
+    # We need BOTH years to calculate year-over-year growth
+    spec_for_filtering = spec.copy()
+    
+    if spec.get("aggregation") == "growth_rate":
+        # Check if we're doing YoY (year in group_by)
+        group_by = spec.get("group_by") or []
+        if "year" in group_by:
+            # For YoY, clear the year filter so we get data from all years
+            filters = spec_for_filtering.get("filters") or {}
+            year_filter = filters.get("year")
+            if year_filter:
+                print(f"🔧 YoY GROWTH: Clearing year filter {year_filter} to include all years")
+                filters["year"] = None
+                spec_for_filtering["filters"] = filters
+    
+    df_filtered = _apply_filters(consolidated_df, spec_for_filtering)
     
     print(f"\nAfter _apply_filters():")
     print(f"  df_filtered.shape: {df_filtered.shape if df_filtered is not None else None}")
