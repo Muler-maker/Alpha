@@ -729,51 +729,105 @@ def _augment_spec_with_date_heuristics(question: str, spec: Dict[str, Any]) -> D
     return spec
 
 
-def _normalize_product_filters(spec: Dict[str, Any], question: str) -> Dict[str, Any]:
+def _normalize_entity_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Fix two issues:
-    1. Don't confuse distributor names (DSD, PI Medical) with product names
-    2. Default to 'product_sold' unless user asked about PRODUCED / MANUFACTURED
+    If a customer value actually exists in the distributor column,
+    move it to distributor. This fixes cases where the LLM or injection
+    logic misclassified a distributor as a customer.
+    
+    Also checks the reverse: if a distributor value is actually a customer.
     """
-    q = (question or "").lower()
-    filters = spec.get("filters", {}) or {}
+    filters = spec.get("filters") or {}
     
-    prod_sold = filters.get("product_sold")
-    prod_cat = filters.get("product_catalogue")
+    # Build set of distributor names (normalized)
+    if "Distributor" in df.columns:
+        dist_names = {
+            str(x).strip().lower() 
+            for x in df["Distributor"].dropna().unique()
+        }
+    else:
+        dist_names = set()
     
-    # Known distributor names that might be accidentally set as products
-    distributor_names = ["dsd", "pi medical", "pi med"]
+    # Build set of customer names (normalized)
+    if "Customer" in df.columns:
+        cust_names = {
+            str(x).strip().lower() 
+            for x in df["Customer"].dropna().unique()
+        }
+    else:
+        cust_names = set()
     
-    # ===== FIX 1: Clear distributor names from product filters =====
-    if prod_sold:
-        prod_lower = str(prod_sold).lower()
-        if any(dist in prod_lower for dist in distributor_names):
-            print(f"🔧 CLEARING product_sold (was distributor name): {prod_sold}")
-            filters["product_sold"] = None
-            prod_sold = None
+    # Check if customer is actually a distributor
+    cust_val = filters.get("customer")
+    if cust_val:
+        cust_lower = str(cust_val).strip().lower()
+        if cust_lower in dist_names:
+            print(f"🔧 NORMALIZING: Moving '{cust_val}' from customer → distributor (found in Distributor column)")
+            filters["distributor"] = cust_val
+            filters["customer"] = None
     
-    if prod_cat:
-        prod_lower = str(prod_cat).lower()
-        if any(dist in prod_lower for dist in distributor_names):
-            print(f"🔧 CLEARING product_catalogue (was distributor name): {prod_cat}")
-            filters["product_catalogue"] = None
-            prod_cat = None
+    # Check if distributor is actually a customer
+    dist_val = filters.get("distributor")
+    if dist_val:
+        dist_lower = str(dist_val).strip().lower()
+        if dist_lower in cust_names and dist_lower not in dist_names:
+            print(f"🔧 NORMALIZING: Moving '{dist_val}' from distributor → customer (found in Customer column only)")
+            filters["customer"] = dist_val
+            filters["distributor"] = None
     
-    # ===== FIX 2: Normalize product dimension preference =====
-    production_words = [
-        "produce", "produced", "production", "manufacture", "manufactured", "batch"
-    ]
-    is_production_question = any(w in q for w in production_words)
-    
-    # If both are set and not a production question, prefer product_sold (commercial view)
-    if prod_sold and prod_cat and not is_production_question:
-        filters["product_catalogue"] = None
-    
-    # If only product_catalogue is set and not a production question, move it to product_sold
-    if prod_cat and not prod_sold and not is_production_question:
-        filters["product_sold"] = prod_cat
-        filters["product_catalogue"] = None
-    
+    spec["filters"] = filters
+    return spec
+
+
+def _disambiguate_customer_vs_distributor(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Make a best-effort distinction between 'customer' and 'distributor'.
+
+    Rules:
+      - If question mentions 'distributor', prefer distributor filter.
+      - If question mentions 'customer' (and not 'distributor'), prefer customer filter.
+      - If a 'customer' value exactly matches a known distributor name, move it to distributor.
+    """
+    filters = spec.get("filters") or {}
+    question = (spec.get("_question_text") or "").lower()
+
+    customer_val = filters.get("customer")
+    distributor_val = filters.get("distributor")
+
+    # 1) Explicit language in question
+    mentions_distributor = "distributor" in question or "distributors" in question
+    mentions_customer = "customer" in question or "customers" in question
+
+    if mentions_distributor and not mentions_customer:
+        # Drop accidental customer
+        if distributor_val:
+            filters.pop("customer", None)
+        spec["filters"] = filters
+        return spec
+
+    if mentions_customer and not mentions_distributor:
+        # Drop accidental distributor
+        if customer_val:
+            filters.pop("distributor", None)
+        spec["filters"] = filters
+        return spec
+
+    # 2) No explicit language – try to fix obvious mis-assignments
+    #    e.g. 'DSD Pharma GmbH' being set as a customer, but is actually a distributor.
+    if "Distributor" in df.columns:
+        distributor_names = {str(x).strip().lower() for x in df["Distributor"].dropna().unique()}
+    else:
+        distributor_names = set()
+
+    if customer_val and not distributor_val:
+        cust_norm = str(customer_val).strip().lower()
+        if cust_norm in distributor_names:
+            # Move it from customer -> distributor
+            filters.pop("customer", None)
+            filters["distributor"] = customer_val
+            spec["filters"] = filters
+            return spec
+
     spec["filters"] = filters
     return spec
 
@@ -782,7 +836,7 @@ def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Di
     Try to infer entity filters from the question text.
     PRIORITY ORDER:
     1. If distributor filter is already set, skip customer injection
-    2. Try to match as a DISTRIBUTOR first (check Distributor column)
+    2. Try to match as a DISTRIBUTOR first (check Distributor column) - AGGRESSIVE matching
     3. Fall back to matching as a CUSTOMER (check Customer column)
     """
     filters = spec.get("filters") or {}
@@ -807,20 +861,28 @@ def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Di
     
     # If distributor is already set, don't try to find a customer
     if filters.get("distributor"):
-        print(f"  📌 Distributor already set: {filters['distributor']} → skipping entity injection")
+        print(f"  ✅ Distributor already set: {filters['distributor']} → skipping entity injection")
         return spec
     
     # If customer is already set, don't override it
     if filters.get("customer"):
-        print(f"  📌 Customer already set: {filters['customer']}")
+        print(f"  ✅ Customer already set: {filters['customer']}")
         return spec
 
     print(f"  Trying to extract entity (distributor first, then customer)...")
 
-    # ===== STEP 1: Try to match as DISTRIBUTOR =====
+    # ===== STEP 1: Try to match as DISTRIBUTOR (VERY AGGRESSIVE) =====
     if "Distributor" in df.columns:
         unique_distributors = [str(x).strip() for x in df["Distributor"].dropna().unique()]
         print(f"  Step 1: Checking {len(unique_distributors)} unique distributors...")
+        
+        # Tokenize question into keywords
+        q_tokens = set(
+            t.strip().lower() 
+            for t in question.replace(",", " ").replace("'", "").split() 
+            if len(t.strip()) > 2
+        )
+        print(f"    Question tokens: {q_tokens}")
         
         # Try exact match first (case-insensitive)
         for dist in unique_distributors:
@@ -831,25 +893,26 @@ def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Di
                 spec["filters"] = filters
                 return spec
         
-        # Try partial match
-        q_tokens = [t.strip() for t in question.replace(",", " ").split() if len(t.strip()) > 2]
+        # Try token-based matching (VERY LOOSE - any token overlap)
         best_match = None
         best_score = 0
 
         for dist in unique_distributors:
             dist_lower = dist.lower()
-            score = 0
-            for tok in q_tokens:
-                if tok in dist_lower or dist_lower in tok:
-                    score += 1
+            dist_tokens = set(dist_lower.split())
+            
+            # Count how many dist tokens appear in question tokens
+            overlap = dist_tokens & q_tokens
+            score = len(overlap)
+            
             if score > best_score:
                 best_score = score
                 best_match = dist
                 if score > 0:
-                    print(f"    Distributor candidate: {dist} (score: {score})")
+                    print(f"    Distributor candidate: {dist} (overlap score: {score}, tokens: {overlap})")
 
         if best_match and best_score > 0:
-            print(f"  ✅ FOUND distributor (partial match): {best_match} (score: {best_score})")
+            print(f"  ✅ FOUND distributor (token match): {best_match} (score: {best_score})")
             filters["distributor"] = best_match
             spec["filters"] = filters
             return spec
@@ -2322,13 +2385,20 @@ def answer_question_from_df(
     spec = _force_cancellation_status_from_text(question, spec)
     spec = _ensure_all_statuses_when_grouped(spec)
     
-    print(f"\n🔧 DEBUG: Before _inject_customer_from_question()")
+    print(f"\nðŸ"§ DEBUG: Before _inject_customer_from_question()")
     print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
     print(f"  filters.distributor: {spec.get('filters', {}).get('distributor')}")
     
     spec = _inject_customer_from_question(consolidated_df, spec)
     
-    print(f"\n🔧 DEBUG: After _inject_customer_from_question()")
+    print(f"\nðŸ"§ DEBUG: After _inject_customer_from_question()")
+    print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
+    print(f"  filters.distributor: {spec.get('filters', {}).get('distributor')}")
+    
+    # 🔧 NEW: Normalize entity filters (move customer to distributor if needed)
+    spec = _normalize_entity_filters(consolidated_df, spec)
+    
+    print(f"\n🔧 DEBUG: After _normalize_entity_filters()")
     print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
     print(f"  filters.distributor: {spec.get('filters', {}).get('distributor')}")
     
@@ -2351,6 +2421,8 @@ def answer_question_from_df(
     print(f"\nBefore _apply_filters():")
     print(f"  aggregation: {spec.get('aggregation')}")
     print(f"  group_by: {spec.get('group_by')}")
+    print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
+    print(f"  filters.distributor: {spec.get('filters', {}).get('distributor')}")
     
     # 2) Apply filters & run aggregation
     # 🔧 FIX: For YoY growth, don't filter by a single year
