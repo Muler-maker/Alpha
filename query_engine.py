@@ -786,6 +786,24 @@ def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Di
     3. Fall back to matching as a CUSTOMER (check Customer column)
     """
     filters = spec.get("filters") or {}
+    question = (spec.get("_question_text") or "").lower()
+    
+    # 🔧 DEBUG: Print all distributors and customers
+    print(f"\n🔧 DEBUG _inject_customer_from_question():")
+    print(f"  Question: {question}")
+    print(f"  Current filters: {filters}")
+    
+    if "Distributor" in df.columns:
+        unique_distributors = [str(x).strip() for x in df["Distributor"].dropna().unique()]
+        print(f"  DISTRIBUTORS in data: {unique_distributors}")
+    else:
+        print(f"  ❌ No 'Distributor' column in df")
+    
+    if "Customer" in df.columns:
+        unique_customers = [str(x).strip() for x in df["Customer"].dropna().unique()]
+        print(f"  CUSTOMERS in data (first 10): {unique_customers[:10]}")
+    else:
+        print(f"  ❌ No 'Customer' column in df")
     
     # If distributor is already set, don't try to find a customer
     if filters.get("distributor"):
@@ -797,8 +815,7 @@ def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Di
         print(f"  📌 Customer already set: {filters['customer']}")
         return spec
 
-    question = (spec.get("_question_text") or "").lower()
-    print(f"  Trying to extract entity (distributor first, then customer) from: {question}")
+    print(f"  Trying to extract entity (distributor first, then customer)...")
 
     # ===== STEP 1: Try to match as DISTRIBUTOR =====
     if "Distributor" in df.columns:
@@ -828,7 +845,8 @@ def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Di
             if score > best_score:
                 best_score = score
                 best_match = dist
-                print(f"    Distributor candidate: {dist} (score: {score})")
+                if score > 0:
+                    print(f"    Distributor candidate: {dist} (score: {score})")
 
         if best_match and best_score > 0:
             print(f"  ✅ FOUND distributor (partial match): {best_match} (score: {best_score})")
@@ -869,7 +887,8 @@ def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Di
         if score > best_score:
             best_score = score
             best_match = cust
-            print(f"    Customer candidate: {cust} (score: {score})")
+            if score > 0:
+                print(f"    Customer candidate: {cust} (score: {score})")
 
     if best_match and best_score > 0:
         print(f"  ✅ FOUND customer (partial match): {best_match} (score: {best_score})")
