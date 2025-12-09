@@ -2407,6 +2407,11 @@ def answer_question_from_df(
 
     row_count = len(df_filtered) if df_filtered is not None else 0
 
+ # FIND THIS SECTION in answer_question_from_df() around line 2370-2420
+# It starts with "# 8) Build the core textual answer by aggregation type"
+# 
+# Replace the entire growth rate handling section with this:
+
     # 8) Build the core textual answer by aggregation type
     core_answer = ""
 
@@ -2474,7 +2479,7 @@ def answer_question_from_df(
             )
             core_answer = header + preview_md
 
-    # GROWTH RATE
+    # GROWTH RATE - FIXED TO SHOW ALL ROWS
     elif aggregation == "growth_rate":
         if group_df is None:
             if numeric_value is None or pd.isna(numeric_value):
@@ -2509,7 +2514,7 @@ def answer_question_from_df(
                         f"based on {status_text} for {filter_text}.\n\n"
                     )
 
-                core_answer = header + preview_md
+                core_answer = header + (preview_md or "")
 
             # Year-over-year growth table
             elif "YoY_Growth" in cols:
@@ -2518,14 +2523,16 @@ def answer_question_from_df(
                     f"Here is the **year-over-year growth** per group "
                     f"based on {status_text} for {filter_text}.\n\n"
                 )
-                core_answer = header + preview_md
+                core_answer = header + (preview_md or "")
 
             else:
+                # Fallback for other growth metrics - show all rows
                 preview_md = group_df.to_markdown(index=False)
-                core_answer = (
+                header = (
                     f"Here is the **growth breakdown per group** for {status_text} for {filter_text}:\n\n"
-                    + preview_md
                 )
+                
+                core_answer = header + (preview_md or "")
 
     # Fallback
     else:
