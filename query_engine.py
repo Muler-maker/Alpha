@@ -777,72 +777,91 @@ def _normalize_product_filters(spec: Dict[str, Any], question: str) -> Dict[str,
     spec["filters"] = filters
     return spec
 
-# Find and replace _inject_customer_from_question() with this version:
-
-# Replace the _inject_customer_from_question() function with this version:
-
 def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Try to infer a *customer* filter from the question text.
-    BUT: Don't inject a customer if:
-    1. We already have a distributor filter set
-    2. The matched name is a known distributor (like DSD, PI Medical)
+    Try to infer entity filters from the question text.
+    PRIORITY ORDER:
+    1. If distributor filter is already set, skip customer injection
+    2. Try to match as a DISTRIBUTOR first (check Distributor column)
+    3. Fall back to matching as a CUSTOMER (check Customer column)
     """
     filters = spec.get("filters") or {}
     
-    # ===== NEW: If distributor is already set, don't try to find a customer =====
+    # If distributor is already set, don't try to find a customer
     if filters.get("distributor"):
-        print(f"  📌 Distributor already set: {filters['distributor']} → skipping customer injection")
+        print(f"  📌 Distributor already set: {filters['distributor']} → skipping entity injection")
         return spec
     
-    # If the LLM already set a customer, don't override it
+    # If customer is already set, don't override it
     if filters.get("customer"):
-        print(f"  Customer already set: {filters['customer']}")
+        print(f"  📌 Customer already set: {filters['customer']}")
         return spec
 
     question = (spec.get("_question_text") or "").lower()
-    print(f"  Trying to extract customer from: {question}")
+    print(f"  Trying to extract entity (distributor first, then customer) from: {question}")
 
+    # ===== STEP 1: Try to match as DISTRIBUTOR =====
+    if "Distributor" in df.columns:
+        unique_distributors = [str(x).strip() for x in df["Distributor"].dropna().unique()]
+        print(f"  Step 1: Checking {len(unique_distributors)} unique distributors...")
+        
+        # Try exact match first (case-insensitive)
+        for dist in unique_distributors:
+            dist_lower = dist.lower()
+            if dist_lower in question:
+                print(f"  ✅ FOUND distributor (exact match): {dist}")
+                filters["distributor"] = dist
+                spec["filters"] = filters
+                return spec
+        
+        # Try partial match
+        q_tokens = [t.strip() for t in question.replace(",", " ").split() if len(t.strip()) > 2]
+        best_match = None
+        best_score = 0
+
+        for dist in unique_distributors:
+            dist_lower = dist.lower()
+            score = 0
+            for tok in q_tokens:
+                if tok in dist_lower or dist_lower in tok:
+                    score += 1
+            if score > best_score:
+                best_score = score
+                best_match = dist
+                print(f"    Distributor candidate: {dist} (score: {score})")
+
+        if best_match and best_score > 0:
+            print(f"  ✅ FOUND distributor (partial match): {best_match} (score: {best_score})")
+            filters["distributor"] = best_match
+            spec["filters"] = filters
+            return spec
+        
+        print(f"  ❌ No distributor match found")
+
+    # ===== STEP 2: Fall back to matching as CUSTOMER =====
     if "Customer" not in df.columns:
         print(f"  'Customer' column not in df")
         return spec
 
-    # ===== NEW: Known distributor names to avoid =====
-    known_distributors = ["dsd", "pi medical", "pi med"]
-    
     unique_customers = [str(x).strip() for x in df["Customer"].dropna().unique()]
-    print(f"  Unique customers in data: {unique_customers[:5]}...")  # Show first 5
+    print(f"  Step 2: Checking {len(unique_customers)} unique customers...")
     
     # Try exact match first (case-insensitive)
     for cust in unique_customers:
         cust_lower = cust.lower()
-        
-        # Skip if this is a known distributor name
-        if any(dist in cust_lower for dist in known_distributors):
-            print(f"  ⏭️  Skipping '{cust}' (matches known distributor)")
-            continue
-            
         if cust_lower in question:
-            print(f"  ✅ FOUND exact match: {cust}")
+            print(f"  ✅ FOUND customer (exact match): {cust}")
             filters["customer"] = cust
             spec["filters"] = filters
             return spec
     
     # Try partial match
     q_tokens = [t.strip() for t in question.replace(",", " ").split() if len(t.strip()) > 2]
-    print(f"  Question tokens: {q_tokens}")
-    
     best_match = None
     best_score = 0
 
     for cust in unique_customers:
         cust_lower = cust.lower()
-        
-        # Skip if this is a known distributor name
-        if any(dist in cust_lower for dist in known_distributors):
-            print(f"  ⏭️  Skipping '{cust}' (matches known distributor)")
-            continue
-        
         score = 0
         for tok in q_tokens:
             if tok in cust_lower or cust_lower in tok:
@@ -850,16 +869,15 @@ def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Di
         if score > best_score:
             best_score = score
             best_match = cust
-            print(f"    Candidate: {cust} (score: {score})")
+            print(f"    Customer candidate: {cust} (score: {score})")
 
-    # Require at least 1 token match to avoid random noise
     if best_match and best_score > 0:
-        print(f"  ✅ FOUND partial match: {best_match} (score: {best_score})")
+        print(f"  ✅ FOUND customer (partial match): {best_match} (score: {best_score})")
         filters["customer"] = best_match
         spec["filters"] = filters
         return spec
     
-    print(f"  ❌ No customer match found")
+    print(f"  ❌ No entity match found")
     return spec
 # --------------------------------------------------------------------
 # 2) EXECUTION LAYER – run the spec on the consolidated DataFrame
