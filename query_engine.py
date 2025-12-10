@@ -1951,22 +1951,17 @@ def _run_aggregation(
     # GROWTH RATE (WoW / YoY) - WITH ENTITY FILTERING
     # ------------------------------------------------------------------
     if aggregation == "growth_rate":
-        debug_msg = f"""
-🔴 _run_aggregation() DEBUG:
-  aggregation: {aggregation}
-  group_by: {group_by}
-  group_cols: {group_cols}
-  total_col: {total_col}
-  base_df.shape: {base_df.shape}
-  time_window.mode: {spec.get('time_window', {}).get('mode')}
-"""
-        debug_msg += "\n✅ GROWTH_RATE aggregation detected\n"
-
         time_window = spec.get("time_window") or {}
-        compare = spec.get("compare") or {}
-        entities = compare.get("entities")
-        entity_type = compare.get("entity_type")
 
+        # Defensive: normalize `compare` and `entities`
+        compare = spec.get("compare") or {}
+        if compare is None:
+            compare = {}
+        entities = compare.get("entities") or []   # <- never None
+        compare["entities"] = entities
+        spec["compare"] = compare
+
+        entity_type = compare.get("entity_type")
         debug_msg += f"  time_window.mode: {time_window.get('mode')}\n"
         debug_msg += f"  compare.entities: {entities}\n"
         debug_msg += f"  compare.entity_type: {entity_type}\n"
@@ -2069,8 +2064,15 @@ def _run_aggregation(
     # COMPARE MODE (entity or time comparison)
     # ------------------------------------------------------------------
     if aggregation == "compare":
+        # Normalize compare and entities so they are never None
         compare = spec.get("compare") or {}
-        entities = compare.get("entities")
+        if compare is None:
+            compare = {}
+
+        entities = compare.get("entities") or []   # <- always a list
+        compare["entities"] = entities
+        spec["compare"] = compare
+
         entity_type = compare.get("entity_type")
 
         if entities and entity_type and entity_type not in ("product_sold", "product_catalogue"):
@@ -3116,6 +3118,11 @@ def answer_question_from_df(
 
     # 1) Build & normalize the spec
     spec = _interpret_question_with_llm(question, history=history) or {}
+    # Ensure compare block is always a dict
+    if spec is None:
+        spec = {}
+    if spec.get("compare") is None:
+        spec["compare"] = {}
 
     # Defensive normalization so we never get None where dicts are expected
     spec.setdefault("filters", {})
