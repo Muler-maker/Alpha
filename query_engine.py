@@ -1865,7 +1865,7 @@ def _run_aggregation(
     full_df: Optional[pd.DataFrame] = None,
 ) -> Tuple[Optional[pd.DataFrame], float]:
     """
-    Run the specified aggregation (sum, average, share_of_total, growth_rate)
+    Run the specified aggregation (sum, average, share_of_total, growth_rate, top_n)
     on the filtered data.
     """
     if df_filtered is None or not isinstance(df_filtered, pd.DataFrame) or df_filtered.empty:
@@ -1882,6 +1882,76 @@ def _run_aggregation(
     group_by = spec.get("group_by") or []
 
     group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
+
+    # ------------------------------------------------------------------
+    # TOP N (ranking entities by volume)
+    # ------------------------------------------------------------------
+    if aggregation == "top_n":
+        n_value = spec.get("_top_n_value", 10)
+        rank_entity = spec.get("_top_n_entity")
+        
+        print(f"\n🔴 TOP_N EXECUTION:")
+        print(f"  n_value: {n_value}")
+        print(f"  rank_entity: {rank_entity}")
+        print(f"  group_by: {group_by}")
+        print(f"  group_cols: {group_cols}")
+        print(f"  df_filtered.shape: {base_df.shape}")
+        
+        if not rank_entity or not group_cols:
+            print(f"  ❌ Missing rank_entity or group_cols")
+            return None, float("nan")
+        
+        # Make sure the entity column is in group_cols
+        entity_col = mapping.get(rank_entity)
+        print(f"  entity_col from mapping: {entity_col}")
+        
+        if not entity_col or entity_col not in base_df.columns:
+            print(f"  ❌ entity_col '{entity_col}' not in base_df.columns")
+            print(f"  Available columns: {list(base_df.columns)[:10]}")
+            return None, float("nan")
+        
+        # Group by entity and sum totals
+        grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].sum()
+        
+        print(f"  After groupby: shape={grouped_df.shape}")
+        
+        # Sort by total_col descending
+        grouped_df = grouped_df.sort_values(total_col, ascending=False)
+        
+        # Take top N
+        top_df = grouped_df.head(n_value).reset_index(drop=True)
+        
+        # Add rank column
+        top_df.insert(0, "Rank", range(1, len(top_df) + 1))
+        
+        # Format the entity column (clean up long names)
+        if entity_col in top_df.columns:
+            name_simplifications = {
+                "dsd pharma gmbh": "DSD Pharma GmbH",
+                "pi medical diagnostic equipment b.v.": "PI Medical",
+            }
+            top_df[entity_col] = (
+                top_df[entity_col]
+                .astype(str)
+                .str.strip()
+                .apply(lambda x: name_simplifications.get(x.lower(), x))
+            )
+        
+        # Round mCi values
+        top_df[total_col] = top_df[total_col].round(0).astype(int)
+        
+        # Calculate total volume
+        total_volume = float(base_df[total_col].sum())
+        
+        print(f"  Top {n_value} result: shape={top_df.shape}")
+        print(f"  Total volume: {total_volume}")
+        
+        return top_df, total_volume
+
+    # ------------------------------------------------------------------
+    # REST OF AGGREGATIONS (growth_rate, compare, sum_mci, etc.)
+    # ------------------------------------------------------------------
+    # [All your existing code continues here...]
 
     debug_msg = f"""
 🔴 _run_aggregation() DEBUG:
