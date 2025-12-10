@@ -1792,14 +1792,17 @@ def _run_aggregation(
         if compare is None:
             compare = {}
 
-        entities = compare.get("entities") or []   # <- always a list (possibly empty)
+        entities = compare.get("entities")
+        if entities is None:
+            entities = []
         compare["entities"] = entities
         spec["compare"] = compare
 
         entity_type = compare.get("entity_type")
 
-        if entities and entity_type and entity_type not in ("product_sold", "product_catalogue"):
-            entity_col = mapping.get(entity_type)
+        # DISTRIBUTOR COMPARISON
+        if entities and entity_type == "distributor":
+            entity_col = mapping.get("distributor")
             if not entity_col or entity_col not in df_filtered.columns:
                 return None, float("nan")
 
@@ -1808,37 +1811,57 @@ def _run_aggregation(
                     return False
                 return str(target).lower() in str(cell).lower()
 
-            rows = []
+            # Get data for each entity
+            rows_by_entity = {}
             for ent in entities:
                 sub = df_filtered[df_filtered[entity_col].apply(lambda x: _match_entity(x, ent))]
-                if sub.empty:
-                    continue
-                sub = sub.copy()
-                sub["_CompareEntity"] = ent
-                rows.append(sub)
+                if not sub.empty:
+                    rows_by_entity[ent] = sub
 
-            if not rows:
+            if not rows_by_entity:
                 return None, float("nan")
 
-            df_compare = pd.concat(rows, ignore_index=True)
+            # Build comparison table
+            comparison_data = []
+            
+            for ent in entities:
+                if ent not in rows_by_entity:
+                    continue
+                
+                sub = rows_by_entity[ent]
+                
+                # Calculate metrics
+                total_mci = float(sub[total_col].sum())
+                count = len(sub)
+                avg_mci = total_mci / count if count > 0 else 0
+                
+                row = {
+                    "Distributor": ent,
+                    "Total_mCi": int(round(total_mci)),
+                    "Count": count,
+                    "Average_mCi": int(round(avg_mci))
+                }
+                
+                # Add breakdown by group_by dimensions if specified
+                if group_by and group_by != ["distributor"]:
+                    sub_grouped = sub.groupby(
+                        [mapping.get(g) for g in group_by if mapping.get(g) and g != "distributor"],
+                        as_index=False
+                    )[total_col].sum()
+                    row["_grouped_data"] = sub_grouped
+                
+                comparison_data.append(row)
+            
+            # Convert to DataFrame
+            comparison_df = pd.DataFrame(comparison_data)
+            comparison_df = comparison_df.drop(columns=["_grouped_data"], errors="ignore")
+            
+            # Calculate total across all entities
+            total_mci = float(comparison_df["Total_mCi"].sum())
+            
+            return comparison_df, total_mci
 
-            extra_group_cols = [
-                mapping[g]
-                for g in group_by
-                if g != entity_type and mapping.get(g)
-            ]
-            group_cols_with_entity = (
-                ["_CompareEntity"] + extra_group_cols
-                if extra_group_cols
-                else ["_CompareEntity"]
-            )
-
-            grouped_df = df_compare.groupby(group_cols_with_entity, as_index=False)[total_col].sum()
-            grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
-            total_mci = float(df_compare[total_col].sum())
-            return grouped_df, total_mci
-
-        # Product comparison
+        # PRODUCT COMPARISON
         if entities and entity_type in ("product_sold", "product_catalogue"):
             prod_col = (
                 mapping.get("product_sold")
@@ -1883,44 +1906,32 @@ def _run_aggregation(
 
                 return df[series.str.contains(label, na=False)]
 
-            rows: List[pd.DataFrame] = []
+            # Get data for each product
+            comparison_data = []
             for ent in entities:
                 sub = _product_subset(df_filtered, ent)
                 if sub.empty:
                     continue
-                sub = sub.copy()
-                sub["_CompareEntity"] = ent
-                rows.append(sub)
+                
+                total_mci = float(sub[total_col].sum())
+                count = len(sub)
+                avg_mci = total_mci / count if count > 0 else 0
+                
+                comparison_data.append({
+                    "Product": ent.upper(),
+                    "Total_mCi": int(round(total_mci)),
+                    "Count": count,
+                    "Average_mCi": int(round(avg_mci))
+                })
 
-            if not rows:
+            if not comparison_data:
                 return None, float("nan")
 
-            df_compare = pd.concat(rows, ignore_index=True)
+            comparison_df = pd.DataFrame(comparison_data)
+            total_mci = float(comparison_df["Total_mCi"].sum())
+            return comparison_df, total_mci
 
-            extra_group_cols = [
-                mapping[g]
-                for g in group_by
-                if g and mapping.get(g)
-            ]
-            group_cols_with_entity = (
-                ["_CompareEntity"] + extra_group_cols
-                if extra_group_cols
-                else ["_CompareEntity"]
-            )
-
-            grouped_df = df_compare.groupby(
-                group_cols_with_entity, as_index=False
-            )[total_col].sum()
-            grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
-            total_mci = float(df_compare[total_col].sum())
-            return grouped_df, total_mci
-
-        period_a = compare.get("period_a")
-        period_b = compare.get("period_b")
-        if period_a and period_b:
-            spec["aggregation"] = "growth_rate"
-            return _run_aggregation(df_filtered, spec, full_df)
-
+        # Fallback: simple grouping
         if group_cols:
             grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
             grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
