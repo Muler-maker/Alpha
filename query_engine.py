@@ -3109,11 +3109,11 @@ def answer_question_from_df(
     if consolidated_df is None or consolidated_df.empty:
         return "The consolidated data is empty. Please load data first."
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("DEBUG answer_question_from_df() START")
-    print("="*70)
+    print("=" * 70)
     print(f"Question: {question}")
-    
+
     # 1) Build & normalize the spec
     spec = _interpret_question_with_llm(question, history=history)
 
@@ -3123,7 +3123,7 @@ def answer_question_from_df(
     print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
     print(f"  filters.distributor: {spec.get('filters', {}).get('distributor')}")
     print(f"  filters.year: {spec.get('filters', {}).get('year')}")
-    
+
     # Ensure we have explicit week/year if they appear in the question text
     q_lower = (question or "").lower()
     filters = spec.get("filters") or {}
@@ -3151,11 +3151,11 @@ def answer_question_from_df(
 
     spec = _force_cancellation_status_from_text(question, spec)
     spec = _ensure_all_statuses_when_grouped(spec)
-    
+
     print(f"\n[ENTITY] Before entity processing:")
     print(f"  customer: {spec.get('filters', {}).get('customer')}")
     print(f"  distributor: {spec.get('filters', {}).get('distributor')}")
-    
+
     spec = _inject_customer_from_question(consolidated_df, spec)
     spec = _normalize_entity_filters(consolidated_df, spec)
     spec = _disambiguate_customer_vs_distributor(consolidated_df, spec)
@@ -3180,7 +3180,7 @@ def answer_question_from_df(
 
     # 2) Apply filters & run aggregation
     spec_for_filtering = spec.copy()
-    
+
     if spec.get("aggregation") == "growth_rate":
         group_by = spec.get("group_by") or []
         if "year" in group_by:
@@ -3190,12 +3190,12 @@ def answer_question_from_df(
                 print(f"[YoY] Clearing year filter to include all years")
                 filters["year"] = None
                 spec_for_filtering["filters"] = filters
-    
+
     df_filtered = _apply_filters(consolidated_df, spec_for_filtering)
-    
+
     print(f"\n[FILTER] After filtering:")
     print(f"  rows returned: {len(df_filtered) if df_filtered is not None else 0}")
-    
+
     group_df, numeric_value = _run_aggregation(df_filtered, spec, consolidated_df)
 
     print(f"\n[AGGREGATION] After aggregation:")
@@ -3203,20 +3203,20 @@ def answer_question_from_df(
         print(f"  result shape: {group_df.shape}")
         print(f"  columns: {list(group_df.columns)}")
     else:
-        print(f"  result: None")
+        print("  result: None")
     print(f"  numeric value: {numeric_value}")
-    
+
     # Define aggregation early for safe use throughout
     aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
     print(f"\n[DEBUG] aggregation set to: {aggregation}")
-    
+
     # ===== PIVOT growth comparisons FIRST (before any other reshaping) =====
     if group_df is not None and aggregation == "growth_rate":
-        print(f"\n[PIVOT] Attempting to pivot growth rate table...")
+        print("\n[PIVOT] Attempting to pivot growth rate table...")
         original_shape = group_df.shape
         group_df = _pivot_growth_by_entity(group_df, spec)
         print(f"[PIVOT] After pivot: shape changed from {original_shape} to {group_df.shape if group_df is not None else None}")
-    
+
     # 3) Pivot-style reshaping for time dimensions (but skip if already pivoted)
     if aggregation != "growth_rate":  # Skip normal reshape if growth_rate (already pivoted above)
         group_df = _reshape_for_display(group_df, spec)
@@ -3306,7 +3306,7 @@ def answer_question_from_df(
 
     # 7) Build human-readable filter description
     filters = spec.get("filters", {}) or {}
-    
+
     parts = []
     if filters.get("customer"):
         parts.append(f"customer **{filters['customer']}**")
@@ -3348,9 +3348,8 @@ def answer_question_from_df(
     # 8) Build the core textual answer by aggregation type
     core_answer = ""
 
- 
     # SUM (and basic comparison tables)
-    elif aggregation in ("sum_mci", "compare"):
+    if aggregation in ("sum_mci", "compare"):
         if group_df is None:
             core_answer = (
                 f"Based on {status_text} for {filter_text}, the total ordered amount is "
@@ -3509,6 +3508,7 @@ def answer_question_from_df(
         refined_answer = final_answer
 
     return refined_answer
+
 # -------------------------
 # Dynamic week window logic
 # -------------------------
