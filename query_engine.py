@@ -3108,13 +3108,27 @@ def answer_question_from_df(
 
     row_count = len(df_filtered) if df_filtered is not None else 0
 
-    # ------------------------------------------------------------------
+# ------------------------------------------------------------------
     # 6) Build the core textual answer by aggregation type
     # ------------------------------------------------------------------
     core_answer = ""
 
-    # SUM (default), COMPARE tables, TOP N – same textual skeleton
-    if aggregation in ("sum_mci", "compare", "top_n"):
+    # COMPARE - distributor/product comparison
+    if aggregation == "compare":
+        if group_df is None:
+            core_answer = (
+                f"Based on {status_text} for {filter_text}, "
+                f"the total ordered amount is **{numeric_value:,.0f} mCi**."
+            )
+        else:
+            preview_md = group_df.to_markdown(index=False)
+            header = (
+                f"Here is a **side-by-side comparison** for {status_text} for {filter_text}:\n\n"
+            )
+            core_answer = header + (preview_md or "")
+
+    # SUM (default), TOP N – same textual skeleton
+    elif aggregation in ("sum_mci", "top_n"):
         if group_df is None:
             core_answer = (
                 f"Based on {status_text} for {filter_text}, the total ordered amount is "
