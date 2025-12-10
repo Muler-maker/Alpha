@@ -3114,26 +3114,24 @@ def answer_question_from_df(
     print("=" * 70)
     print(f"Question: {question}")
 
-    # --- CRITICAL FIX: Define aggregation variable immediately.
-    # We initialize it here to prevent 'NameError' in any prematurely
-    # executing logic, and then update it with the LLM's value below.
-    aggregation = "sum_mci"
-    # ----------------------------------------------------------------
-
     # 1) Build & normalize the spec
-    spec = _interpret_question_with_llm(question, history=history)
+    spec = _interpret_question_with_llm(question, history=history) or {}
 
-    # Re-read aggregation from spec after interpretation (the actual value)
-    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
-    
+    # Defensive normalization so we never get None where dicts are expected
+    spec.setdefault("filters", {})
+    spec.setdefault("time_window", {})
+    spec.setdefault("compare", {})
+
     print(f"\n[SPEC] After interpretation:")
-    print(f"  aggregation: {aggregation}")
+    print(f"  aggregation: {spec.get('aggregation')}")
     print(f"  group_by: {spec.get('group_by')}")
     print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
     print(f"  filters.distributor: {spec.get('filters', {}).get('distributor')}")
     print(f"  filters.year: {spec.get('filters', {}).get('year')}")
 
-    # Ensure we have explicit week/year if they appear in the question text
+    # ------------------------------------------------------------------
+    # 1a) Extract explicit week / year from the question text if missing
+    # ------------------------------------------------------------------
     q_lower = (question or "").lower()
     filters = spec.get("filters") or {}
 
@@ -3158,6 +3156,9 @@ def answer_question_from_df(
         if "Year" in consolidated_df.columns and not consolidated_df["Year"].dropna().empty:
             filters["year"] = int(consolidated_df["Year"].max())
 
+    # ------------------------------------------------------------------
+    # 1b) Shipping-status and entity normalization
+    # ------------------------------------------------------------------
     spec = _force_cancellation_status_from_text(question, spec)
     spec = _ensure_all_statuses_when_grouped(spec)
 
@@ -3187,27 +3188,28 @@ def answer_question_from_df(
             gb = [g for g in gb if g != "shipping_status"]
         spec["group_by"] = gb
 
-    # 2) Apply filters & run aggregation
-    spec_for_filtering = spec.copy()
-
-    # Re-read aggregation just in case a helper modified spec (safe fallback)
-    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
-
-    if aggregation == "growth_rate":
+    # ------------------------------------------------------------------
+    # 2) Apply filters (with a small adjustment for growth_rate + YoY)
+    # ------------------------------------------------------------------
+    spec_for_filtering = dict(spec)  # shallow copy is fine here
+    if spec.get("aggregation") == "growth_rate":
         group_by = spec.get("group_by") or []
         if "year" in group_by:
-            filters = spec_for_filtering.get("filters") or {}
-            year_filter = filters.get("year")
+            filters_f = spec_for_filtering.get("filters") or {}
+            year_filter = filters_f.get("year")
             if year_filter:
                 print(f"[YoY] Clearing year filter to include all years")
-                filters["year"] = None
-                spec_for_filtering["filters"] = filters
+                filters_f["year"] = None
+                spec_for_filtering["filters"] = filters_f
 
     df_filtered = _apply_filters(consolidated_df, spec_for_filtering)
 
     print(f"\n[FILTER] After filtering:")
     print(f"  rows returned: {len(df_filtered) if df_filtered is not None else 0}")
 
+    # ------------------------------------------------------------------
+    # 3) Run aggregation
+    # ------------------------------------------------------------------
     group_df, numeric_value = _run_aggregation(df_filtered, spec, consolidated_df)
 
     print(f"\n[AGGREGATION] After aggregation:")
@@ -3215,21 +3217,30 @@ def answer_question_from_df(
         print(f"  result shape: {group_df.shape}")
         print(f"  columns: {list(group_df.columns)}")
     else:
-        print("  result: None")
+        print(f"  result: None")
     print(f"  numeric value: {numeric_value}")
 
-    # ===== PIVOT growth comparisons FIRST (before any other reshaping) =====
+    # Define aggregation early for safe use throughout
+    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
+    print(f"\n[DEBUG] aggregation set to: {aggregation}")
+
+    # ------------------------------------------------------------------
+    # 4) Reshape / pivot for display
+    # ------------------------------------------------------------------
+    # 4a) Growth-rate tables: pivot entities vs periods first
     if group_df is not None and aggregation == "growth_rate":
-        print("\n[PIVOT] Attempting to pivot growth rate table...")
+        print(f"\n[PIVOT] Attempting to pivot growth rate table...")
         original_shape = group_df.shape
         group_df = _pivot_growth_by_entity(group_df, spec)
-        print(f"[PIVOT] After pivot: shape changed from {original_shape} to {group_df.shape if group_df is not None else None}")
-
-    # 3) Pivot-style reshaping for time dimensions (but skip if already pivoted)
-    if aggregation != "growth_rate":
+        print(
+            f"[PIVOT] After pivot: shape changed from {original_shape} "
+            f"to {group_df.shape if group_df is not None else None}"
+        )
+    else:
+        # 4b) Regular reshaping (week / month / year on separate columns)
         group_df = _reshape_for_display(group_df, spec)
 
-    # 4) Format numeric columns
+    # 4c) First numeric formatting pass
     if group_df is not None and not group_df.empty:
         for col in group_df.columns:
             col_lower = str(col).lower()
@@ -3255,7 +3266,7 @@ def answer_question_from_df(
                 except Exception:
                     pass
 
-    # 5) If we have Year + Total_mCi, pivot so years are columns
+    # 4d) If we have Year + Total_mCi, pivot so years are columns
     group_by = spec.get("group_by") or []
     if (
         group_df is not None
@@ -3278,15 +3289,19 @@ def answer_question_from_df(
                 pass
         else:
             years = sorted(group_df["Year"].unique())
-            wide = pd.DataFrame([{
-                str(y): float(
-                    group_df.loc[group_df["Year"] == y, "Total_mCi"].sum()
-                )
-                for y in years
-            }])
+            wide = pd.DataFrame(
+                [
+                    {
+                        str(y): float(
+                            group_df.loc[group_df["Year"] == y, "Total_mCi"].sum()
+                        )
+                        for y in years
+                    }
+                ]
+            )
             group_df = wide
 
-    # 6) One more pass of numeric formatting after pivot
+    # 4e) Second numeric formatting pass (after possible year pivot)
     if group_df is not None and not group_df.empty:
         for col in group_df.columns:
             col_lower = str(col).lower()
@@ -3312,7 +3327,9 @@ def answer_question_from_df(
                 except Exception:
                     pass
 
-    # 7) Build human-readable filter description
+    # ------------------------------------------------------------------
+    # 5) Human-readable filter + status text
+    # ------------------------------------------------------------------
     filters = spec.get("filters", {}) or {}
 
     parts = []
@@ -3338,24 +3355,14 @@ def answer_question_from_df(
         parts.append(f"product from catalogue **{filters['product_catalogue']}**")
     if filters.get("production_site"):
         parts.append(f"production site **{filters['production_site']}**")
-    
-    # Handle time window for text description
-    tw = spec.get("time_window") or {}
-    if tw.get("mode") == "last_n_weeks" and tw.get("n_weeks"):
-        parts.append(f"the last **{tw['n_weeks']} weeks**")
-    elif tw.get("mode") == "anchored_last_n_weeks" and tw.get("n_weeks") and tw.get("anchor", {}).get("week"):
-        anchor_year = tw.get("anchor", {}).get("year")
-        anchor_text = f"week **{tw['anchor']['week']}**"
-        if anchor_year:
-            anchor_text += f" of **{anchor_year}**"
-        parts.append(f"the **{tw['n_weeks']} weeks** leading up to {anchor_text}")
-
 
     filter_text = ", ".join(parts) if parts else "all records"
 
     ship_mode = spec.get("shipping_status_mode", "countable")
     if ship_mode == "countable":
-        status_text = "countable orders"
+        status_text = (
+            "countable orders (shipped, partially shipped, shipped late, or being processed)"
+        )
     elif ship_mode == "cancelled":
         status_text = "cancelled or rejected orders"
     elif ship_mode == "explicit":
@@ -3365,45 +3372,13 @@ def answer_question_from_df(
 
     row_count = len(df_filtered) if df_filtered is not None else 0
 
-    # 8) Build the core textual answer by aggregation type
+    # ------------------------------------------------------------------
+    # 6) Build the core textual answer by aggregation type
+    # ------------------------------------------------------------------
     core_answer = ""
 
-    # TOP N
-    if aggregation == "top_n":
-        rank_entity = spec.get("_top_n_entity", "entity")
-        n_value = spec.get("_top_n_value", 10)
-
-        if group_df is None:
-            core_answer = (
-                f"Could not compute top {n_value} {rank_entity}s for {filter_text}."
-            )
-        else:
-            entity_display = str(rank_entity).replace("_", " ").title()
-            preview_md = group_df.to_markdown(index=False)
-            
-            header = (
-                f"Here are the **top {n_value} {entity_display}s** by order volume "
-                f"for {filter_text}. The total volume across all {entity_display}s is "
-                f"**{numeric_value:,.0f} mCi**.\n\n"
-            )
-            core_answer = header + (preview_md or "")
-
-    # PROJECTION VS ACTUAL
-    elif aggregation == "projection_vs_actual":
-        if group_df is None:
-            core_answer = (
-                f"Could not compute projection vs actuals for {filter_text}."
-            )
-        else:
-            preview_md = group_df.to_markdown(index=False)
-            header = (
-                f"Here is the **projection vs actual** comparison for {filter_text}. "
-                f"Total actual volume: **{numeric_value:,.0f} mCi**.\n\n"
-            )
-            core_answer = header + (preview_md or "")
-
-    # SUM / COMPARE
-    elif aggregation in ("sum_mci", "compare"):
+    # SUM (default), COMPARE tables, TOP N – same textual skeleton
+    if aggregation in ("sum_mci", "compare", "top_n"):
         if group_df is None:
             core_answer = (
                 f"Based on {status_text} for {filter_text}, the total ordered amount is "
@@ -3456,13 +3431,17 @@ def answer_question_from_df(
         else:
             den = share_debug.get("denominator")
             if den is not None and den != 0:
-                denom_txt = f"The total ordered amount (denominator) is **{den:,.0f} mCi**."
+                denom_txt = (
+                    f"The total ordered amount (denominator) is **{den:,.0f} mCi**."
+                )
             else:
-                denom_txt = "The total ordered amount (denominator) is derived from the current filters."
+                denom_txt = (
+                    "The total ordered amount (denominator) is derived from the current filters."
+                )
             preview_md = group_df.to_markdown(index=False)
             header = (
-                f"Here is the **share of total ordered amount per group** for {status_text} for {filter_text}. "
-                f"{denom_txt}\n\n"
+                f"Here is the **share of total ordered amount per group** for {status_text} "
+                f"for {filter_text}. {denom_txt}\n\n"
             )
             core_answer = header + preview_md
 
@@ -3481,28 +3460,40 @@ def answer_question_from_df(
                 )
         else:
             cols = list(group_df.columns)
+
             # Week-over-week growth table
-            if "WoW_Growth_%" in cols or any("Growth" in c for c in cols):
+            if "WoW_Growth_%" in cols:
                 preview_md = group_df.to_markdown(index=False)
                 time_window = spec.get("time_window") or {}
                 n_weeks = time_window.get("n_weeks")
 
                 if n_weeks:
                     header = (
-                        f"Here is the **growth** for the last {n_weeks} weeks "
+                        f"Here is the **week-over-week growth** for the last {n_weeks} weeks "
                         f"for {filter_text}.\n\n"
                     )
                 else:
                     header = (
-                        f"Here is the **growth breakdown** "
+                        f"Here is the **week-over-week growth** "
                         f"for {filter_text}.\n\n"
                     )
+
                 core_answer = header + (preview_md or "")
-            else:
+
+            # Year-over-year growth table
+            elif "YoY_Growth" in cols or any(
+                "vs" in str(c) and "Growth" in str(c) for c in cols
+            ):
                 preview_md = group_df.to_markdown(index=False)
                 header = (
-                    f"Here is the **growth breakdown** for {filter_text}:\n\n"
+                    f"Here is the **year-over-year growth** "
+                    f"for {filter_text}.\n\n"
                 )
+                core_answer = header + (preview_md or "")
+
+            else:
+                preview_md = group_df.to_markdown(index=False)
+                header = f"Here is the **growth breakdown** for {filter_text}:\n\n"
                 core_answer = header + (preview_md or "")
 
     # Fallback
@@ -3519,7 +3510,9 @@ def answer_question_from_df(
                 + preview_md
             )
 
-    # 9) Optionally add metadata snippet
+    # ------------------------------------------------------------------
+    # 7) Optional metadata + chart blocks
+    # ------------------------------------------------------------------
     meta_block = None
     try:
         if _should_include_metadata(spec):
@@ -3527,7 +3520,6 @@ def answer_question_from_df(
     except NameError:
         meta_block = None
 
-    # 10) Optionally add chart block
     chart_block = None
     try:
         if group_df is not None and not group_df.empty:
@@ -3543,13 +3535,16 @@ def answer_question_from_df(
     if chart_block:
         final_answer += "\n\n" + chart_block
 
-    # Optional refinement pass
+    # ------------------------------------------------------------------
+    # 8) Optional refinement pass
+    # ------------------------------------------------------------------
     try:
         refined_answer = _refine_answer_text(client, final_answer, question)
     except Exception:
         refined_answer = final_answer
 
     return refined_answer
+
 # -------------------------
 # Dynamic week window logic
 # -------------------------
