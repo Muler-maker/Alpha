@@ -274,7 +274,7 @@ ALWAYS:
     if spec["compare"] is None:
         spec["compare"] = {}
     
-    # Apply any existing date heuristics
+# Apply any existing date heuristics
     spec = _augment_spec_with_date_heuristics(question, spec)
 
     # Extra post-processing for patterns that the LLM often misses
@@ -283,6 +283,43 @@ ALWAYS:
     # Always keep the raw question text for downstream helpers
     spec["_question_text"] = question
     
+    # ===== CRITICAL: OVERRIDE FOR COMPARISON DETECTION =====
+    # Check for comparison patterns BEFORE other logic
+    has_compare_word = any(word in q_lower for word in ["vs", "versus", "compare", "compared to"])
+    has_distributor_names = any(name in q_lower for name in ["dsd", "pi medical", "scantor", "scintomics"])
+    
+    if has_compare_word and has_distributor_names:
+        # Extract distributor names
+        entities_found = []
+        if "pi medical" in q_lower:
+            entities_found.append("PI Medical")
+        if "dsd" in q_lower:
+            entities_found.append("DSD")
+        if "scantor" in q_lower:
+            entities_found.append("Scantor")
+        if "scintomics" in q_lower:
+            entities_found.append("Scintomics")
+        
+        if len(entities_found) >= 2:
+            print(f"🔴 OVERRIDE: Detected distributor comparison: {entities_found}")
+            spec["aggregation"] = "compare"
+            
+            compare = spec.get("compare") or {}
+            if not isinstance(compare, dict):
+                compare = {}
+            
+            compare["entities"] = entities_found
+            compare["entity_type"] = "distributor"
+            spec["compare"] = compare
+            
+            # Remove any distributor filter so we get both entities
+            filters = spec.get("filters") or {}
+            filters["distributor"] = None
+            spec["filters"] = filters
+            
+            spec["_question_text"] = question
+            return spec
+    
     # Projection vs actual questions
     proj_keywords = ["projection", "projections", "forecast", "budget", "plan"]
     actual_keywords = ["actual", "actuals", "vs", "versus", "variance", "gap"]
@@ -290,11 +327,11 @@ ALWAYS:
     if any(k in q_lower for k in proj_keywords) and any(k in q_lower for k in actual_keywords):
         spec["aggregation"] = "projection_vs_actual"
 
-    # GROWTH RATE DETECTION
+    # GROWTH RATE DETECTION & COMPARISON PATTERNS
     growth_keywords = [
         "growth rate", "growth rates", "weekly growth", "week-over-week",
         "wow", "yoy", "year-over-year", "yearly growth", "growth per week",
-        "growth by week", "last 6 weeks", "previous 6 weeks"  # ADDED THIS
+        "growth by week", "last", "previous"
     ]
     
     if any(kw in q_lower for kw in growth_keywords):
@@ -305,22 +342,53 @@ ALWAYS:
         if not isinstance(gb, list):
             gb = []
         
-        # Check for "last N weeks" / "previous N weeks" pattern
-        m_window = re.search(r"(last|previous)\s+(\d+)\s+weeks?", q_lower)
-        if m_window:
-            print(f"🔴 DETECTED: Last/previous N weeks pattern")
-            n_weeks = int(m_window.group(2))
+        # Check for "last N weeks vs previous N weeks" pattern (2-period comparison)
+        m_compare = re.search(
+            r"(last|previous)\s+(\d+)\s+weeks?\s+(?:vs|versus|compared to|to)\s+(?:the\s+)?(previous|last)\s+(\d+)\s+weeks?",
+            q_lower
+        )
+        if m_compare:
+            print(f"🔴 DETECTED: Last/Previous N weeks vs Previous M weeks comparison")
+            n_weeks_a = int(m_compare.group(2))
+            n_weeks_b = int(m_compare.group(4))
+            
             tw = spec.get("time_window") or {}
             if not isinstance(tw, dict):
                 tw = {}
-            tw["mode"] = "last_n_weeks"
-            tw["n_weeks"] = n_weeks
-            tw["anchor"] = {"year": None, "week": None}
+            
+            tw["mode"] = "compare_periods"
+            tw["period_a"] = {
+                "mode": "last_n_weeks",
+                "n_weeks": n_weeks_a,
+                "anchor": {"year": None, "week": None}
+            }
+            tw["period_b"] = {
+                "mode": "last_n_weeks",
+                "n_weeks": n_weeks_b + n_weeks_a,
+                "anchor": {"year": None, "week": None}
+            }
             spec["time_window"] = tw
             
             if "week" not in gb:
                 gb.insert(0, "week")
-            print(f"🔴 Set time_window mode='last_n_weeks', n_weeks={n_weeks}")
+            print(f"🔴 Set up 2-period comparison: {n_weeks_a} weeks vs {n_weeks_b} weeks prior")
+        else:
+            # Single period: "last N weeks" / "previous N weeks"
+            m_window = re.search(r"(last|previous)\s+(\d+)\s+weeks?", q_lower)
+            if m_window:
+                print(f"🔴 DETECTED: Last/previous N weeks pattern")
+                n_weeks = int(m_window.group(2))
+                tw = spec.get("time_window") or {}
+                if not isinstance(tw, dict):
+                    tw = {}
+                tw["mode"] = "last_n_weeks"
+                tw["n_weeks"] = n_weeks
+                tw["anchor"] = {"year": None, "week": None}
+                spec["time_window"] = tw
+                
+                if "week" not in gb:
+                    gb.insert(0, "week")
+                print(f"🔴 Set time_window mode='last_n_weeks', n_weeks={n_weeks}")
         
         spec["group_by"] = gb
         spec["_question_text"] = question
@@ -340,9 +408,9 @@ ALWAYS:
         spec["_question_text"] = question
         return spec
 
-    # DSD heuristic fix
+    # Default DSD heuristic fix (only if no comparison detected)
     filters = spec.get("filters") or {}
-    if "dsd" in q_lower:
+    if "dsd" in q_lower and "pi medical" not in q_lower:
         if filters.get("customer"):
             filters["customer"] = None
         if not filters.get("distributor"):
