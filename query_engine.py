@@ -3114,13 +3114,18 @@ def answer_question_from_df(
     print("=" * 70)
     print(f"Question: {question}")
 
+    # --- CRITICAL FIX: Define aggregation variable BEFORE spec is interpreted
+    #                   to resolve "NameError: 'aggregation' is not defined"
+    #                   in any dependent logic that may run early.
+    aggregation = "sum_mci"
+    # ----------------------------------------------------------------
+
     # 1) Build & normalize the spec
     spec = _interpret_question_with_llm(question, history=history)
 
-    # --- CRITICAL FIX: Define aggregation variable IMMEDIATELY here ---
+    # Re-read aggregation from spec after interpretation (the actual value)
     aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
-    # ----------------------------------------------------------------
-
+    
     print(f"\n[SPEC] After interpretation:")
     print(f"  aggregation: {aggregation}")
     print(f"  group_by: {spec.get('group_by')}")
