@@ -352,8 +352,84 @@ ALWAYS:
         spec["group_by"] = gb
         print(f"🔴 Final group_by for growth_rate: {gb}")
         print(f"🔴 Final aggregation: growth_rate")
+            # ===== TOP N DETECTION =====
+    top_n_keywords = [
+        "top ", "top10", "top 10", "top5", "top 5", "top3", "top 3",
+        "highest", "largest", "biggest", "most ordered", "most volume",
+        "who ordered the most", "which customers ordered", "which distributors ordered",
+        "which countries ordered", "ranking", "ranked", "rank"
+    ]
+    
+    print(f"\n🔴 TOP N DETECTION CHECK:")
+    print(f"  q_lower: {q_lower}")
+    print(f"  Checking {len(top_n_keywords)} keywords")
+    
+    top_n_detected = any(kw in q_lower for kw in top_n_keywords)
+    print(f"  top_n_detected: {top_n_detected}")
+    
+    if top_n_detected:
+        print(f"🔴 DETECTED: Top N question")
+        spec["aggregation"] = "top_n"
         
-        # IMPORTANT: Return early so we don't hit the old "compare" logic below
+        gb = spec.get("group_by") or []
+        
+        # Extract N value (default to 10)
+        n_value = 10
+        m_n = re.search(r"top\s+(\d+)", q_lower)
+        if m_n:
+            try:
+                n_value = int(m_n.group(1))
+                print(f"🔴 Extracted N={n_value}")
+            except Exception:
+                pass
+        
+        spec["_top_n_value"] = n_value
+        
+        # Determine what entity to rank
+        rank_entity = None
+        
+        if "customer" in q_lower:
+            rank_entity = "customer"
+            if "customer" not in gb:
+                gb.insert(0, "customer")
+            print(f"🔴 Detected entity: customer")
+        elif "distributor" in q_lower:
+            rank_entity = "distributor"
+            if "distributor" not in gb:
+                gb.insert(0, "distributor")
+            print(f"🔴 Detected entity: distributor")
+        elif "country" in q_lower:
+            rank_entity = "country"
+            if "country" not in gb:
+                gb.insert(0, "country")
+            print(f"🔴 Detected entity: country")
+        elif "region" in q_lower:
+            rank_entity = "region"
+            if "region" not in gb:
+                gb.insert(0, "region")
+            print(f"🔴 Detected entity: region")
+        elif "product" in q_lower:
+            if "sold as" in q_lower or "ordered" in q_lower:
+                rank_entity = "product_sold"
+                if "product_sold" not in gb:
+                    gb.insert(0, "product_sold")
+            else:
+                rank_entity = "product_catalogue"
+                if "product_catalogue" not in gb:
+                    gb.insert(0, "product_catalogue")
+            print(f"🔴 Detected entity: {rank_entity}")
+        else:
+            print(f"🔴 WARNING: No entity detected, defaulting to customer")
+            rank_entity = "customer"
+            if "customer" not in gb:
+                gb.insert(0, "customer")
+        
+        spec["_top_n_entity"] = rank_entity
+        spec["group_by"] = gb
+        
+        print(f"🔴 Top N setup complete: entity={rank_entity}, N={n_value}, group_by={gb}")
+        print(f"🔴 Returning spec with aggregation='top_n'")
+        
         spec["_question_text"] = question
         return spec
 # In answer_question_from_df(), find the section that builds core_answer
