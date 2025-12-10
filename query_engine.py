@@ -434,12 +434,25 @@ def _augment_spec_with_date_heuristics(question: str, spec: Dict[str, Any]) -> D
     in the question text, and to enforce dynamic week windows when the
     LLM forgets to set time_window (e.g. 'last 4 weeks').
     """
-    q = (question or "").lower()
-    spec = spec or {}
-
-    # Ensure filters exist
-    filters = spec.get("filters") or {}
+    if spec is None:
+        spec = {}
+    
+    q = str(question or "").lower()  # SAFETY: ensure q is string
+    
+    # Ensure all nested dicts exist and are dicts
+    filters = spec.get("filters")
+    if filters is None or not isinstance(filters, dict):
+        filters = {}
     spec["filters"] = filters
+
+    time_window = spec.get("time_window")
+    if time_window is None or not isinstance(time_window, dict):
+        time_window = {}
+    spec["time_window"] = time_window
+    
+    # Ensure anchor exists
+    if "anchor" not in time_window:
+        time_window["anchor"] = {"year": None, "week": None}
 
     # -----------------------
     # YEAR
@@ -514,20 +527,8 @@ def _augment_spec_with_date_heuristics(question: str, spec: Dict[str, Any]) -> D
     # -----------------------
     # TIME WINDOW (dynamic weeks)
     # -----------------------
-    tw = spec.get("time_window") or {
-        "mode": None,
-        "n_weeks": None,
-        "anchor": {"year": None, "week": None},
-    }
-    if "anchor" not in tw:
-        tw["anchor"] = {"year": None, "week": None}
-    if "year" not in tw["anchor"]:
-        tw["anchor"]["year"] = None
-    if "week" not in tw["anchor"]:
-        tw["anchor"]["week"] = None
-
     # Only add our heuristics if LLM did NOT already set a mode
-    if not tw.get("mode"):
+    if not time_window.get("mode"):
         # --- last / past / previous / trailing / rolling N weeks ---
         m_last_weeks = re.search(
             r"(last|past|previous|trailing|rolling)\s+(\d+)\s+weeks?",
@@ -537,17 +538,17 @@ def _augment_spec_with_date_heuristics(question: str, spec: Dict[str, Any]) -> D
             n_weeks_str = m_last_weeks.group(2)
             try:
                 n_weeks = int(n_weeks_str)
-                tw["mode"] = "last_n_weeks"
-                tw["n_weeks"] = n_weeks
-                tw["anchor"]["year"] = None
-                tw["anchor"]["week"] = None
+                time_window["mode"] = "last_n_weeks"
+                time_window["n_weeks"] = n_weeks
+                time_window["anchor"]["year"] = None
+                time_window["anchor"]["week"] = None
                 # IMPORTANT: dynamic window → we must NOT also use filters.week
                 filters["week"] = None
-            except Exception:
+            except (ValueError, TypeError):
                 pass
 
     # Anchored window: "N weeks before week X [of YEAR]"
-    if not tw.get("mode"):
+    if not time_window.get("mode"):
         m_anchor = re.search(
             r"(\d+)\s+weeks?\s+(?:before|leading up to)\s+week\s+(\d+)(?:\s+of\s+(20[2-3][0-9]))?",
             q,
@@ -556,80 +557,52 @@ def _augment_spec_with_date_heuristics(question: str, spec: Dict[str, Any]) -> D
             try:
                 n_weeks = int(m_anchor.group(1))
                 week_x = int(m_anchor.group(2))
-            except Exception:
+            except (ValueError, TypeError):
                 n_weeks = None
                 week_x = None
 
             if n_weeks is not None and week_x is not None:
-                tw["mode"] = "anchored_last_n_weeks"
-                tw["n_weeks"] = n_weeks
-                tw["anchor"]["week"] = week_x
+                time_window["mode"] = "anchored_last_n_weeks"
+                time_window["n_weeks"] = n_weeks
+                time_window["anchor"]["week"] = week_x
 
                 year_str = m_anchor.group(3)
                 if year_str:
                     try:
                         year_val = int(year_str)
-                        tw["anchor"]["year"] = year_val
+                        time_window["anchor"]["year"] = year_val
                         filters["year"] = year_val
-                    except Exception:
+                    except (ValueError, TypeError):
                         pass
 
                 # For anchored windows we also clear filters.week
                 filters["week"] = None
 
     spec["filters"] = filters
-    spec["time_window"] = tw
+    spec["time_window"] = time_window
 
     # --- ENSURE WEEK EXTRACTION ALWAYS HAPPENS ---
-    # Handles cases like "reason for the drop in week 20"
     if not filters.get("week"):
         m = re.search(r"week\s+(\d{1,2})", q)
         if m:
             try:
                 filters["week"] = int(m.group(1))
-            except Exception:
+            except (ValueError, TypeError):
                 pass
 
     # --- ENSURE YEAR EXTRACTION ALWAYS HAPPENS ---
-    # Handles cases where user omits year but previous question had one
     if not filters.get("year"):
-        # 1. Try explicit year in text
         m = re.search(r"\b(20[2-3][0-9])\b", q)
         if m:
             filters["year"] = int(m.group(1))
-        else:
-            # 2. Infer from history (if available)
-            # You must add history support: _augment_spec... currently doesn't receive it
-            last_year = spec.get("_inferred_year_from_history")
-            if last_year:
-                filters["year"] = last_year
-            else:
-                # 3. Fallback to latest year in metadata
-                try:
-                    filters["year"] = int(METADATA["Year"].max())
-                except Exception:
-                    pass
 
     # --- FINAL: if BOTH year & week exist, enable metadata ---
     spec["_metadata_ready"] = (
         filters.get("year") is not None and
         filters.get("week") is not None
     )
-    # --- WEEK (explicit single week if no dynamic time_window) ---
-    # If we don't already have a week, and there is no dynamic window,
-    # look for patterns like "week 20", "week 3", "week 25 of 2025", etc.
-    tw = spec.get("time_window") or {}
-    if not filters.get("week") and not tw.get("mode"):
-        m = re.search(r"\bweek\s+(\d{1,2})\b", q)
-        if m:
-            try:
-                filters["week"] = int(m.group(1))
-            except ValueError:
-                pass
 
     return spec
-
-
 def _normalize_entity_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[str, Any]:
     """
     If a customer value actually exists in the distributor column,
