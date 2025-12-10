@@ -3245,8 +3245,28 @@ def answer_question_from_df(
     # 8) Build the core textual answer by aggregation type
     core_answer = ""
 
+    # TOP N
+    if aggregation == "top_n":
+        rank_entity = spec.get("_top_n_entity", "entity")
+        n_value = spec.get("_top_n_value", 10)
+        
+        if group_df is None:
+            core_answer = (
+                f"Could not compute top {n_value} {rank_entity}s for {filter_text}."
+            )
+        else:
+            preview_md = group_df.to_markdown(index=False)
+            entity_display = rank_entity.replace("_", " ").title()
+            
+            header = (
+                f"Here are the **top {n_value} {entity_display}s** by order volume "
+                f"for {filter_text}. The total volume across all {entity_display}s is "
+                f"**{numeric_value:,.0f} mCi**.\n\n"
+            )
+            core_answer = header + (preview_md or "")
+
     # SUM (and basic comparison tables)
-    if aggregation in ("sum_mci", "compare"):
+    elif aggregation in ("sum_mci", "compare"):
         if group_df is None:
             core_answer = (
                 f"Based on {status_text} for {filter_text}, the total ordered amount is "
