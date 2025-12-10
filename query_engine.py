@@ -1745,24 +1745,62 @@ def _run_aggregation(
 """
 
     # ------------------------------------------------------------------
-    # GROWTH RATE (WoW / YoY)
+    # GROWTH RATE (WoW / YoY) - WITH ENTITY FILTERING
     # ------------------------------------------------------------------
     if aggregation == "growth_rate":
-        debug_msg += "\n✅ GROWTH_RATE aggregation detected\n"
+        debug_msg += "\nâœ… GROWTH_RATE aggregation detected\n"
 
         time_window = spec.get("time_window") or {}
         compare = spec.get("compare") or {}
+        entities = compare.get("entities")
+        entity_type = compare.get("entity_type")
 
         debug_msg += f"  time_window.mode: {time_window.get('mode')}\n"
+        debug_msg += f"  compare.entities: {entities}\n"
+        debug_msg += f"  compare.entity_type: {entity_type}\n"
 
-        # Recompute group_cols inside here in case spec was tweaked
+        # --------- STEP 1: Filter by specific entities if comparing ---------
+        if entities and entity_type:
+            entity_col = mapping.get(entity_type)
+            debug_msg += f"  entity_col from mapping: {entity_col}\n"
+            
+            if entity_col and entity_col in base_df.columns:
+                # Build OR mask for all entities in the compare list
+                mask = None
+                for ent in entities:
+                    cur = base_df[entity_col].astype(str).str.contains(
+                        str(ent), case=False, na=False, regex=False
+                    )
+                    if mask is None:
+                        mask = cur
+                    else:
+                        mask = mask | cur
+                    debug_msg += f"    Checking entity '{ent}': {cur.sum()} rows\n"
+                
+                if mask is not None:
+                    base_df = base_df[mask]
+                    debug_msg += f"  After entity filtering: {len(base_df)} rows remaining\n"
+
+        # --------- STEP 2: Recompute group_cols with entity dimension ---------
         group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
+        debug_msg += f"  Initial group_cols from spec: {group_cols}\n"
 
-        # ---------------------------------------------
+        # Make sure entity_type is in group_cols if we're comparing entities
+        if entities and entity_type:
+            entity_col = mapping.get(entity_type)
+            if entity_col and entity_col not in group_cols:
+                group_cols.insert(0, entity_col)
+                debug_msg += f"  Added entity column to group_cols: {entity_col}\n"
+
+        debug_msg += f"  Final group_cols: {group_cols}\n"
+        debug_msg += f"  total_col: {total_col}\n"
+        debug_msg += f"  base_df.shape: {base_df.shape}\n"
+
+        # --------- STEP 3: Route to appropriate growth calculation ---------
+
         # Case 1: Dynamic week window → always WoW
-        # ---------------------------------------------
         if time_window.get("mode") in ("last_n_weeks", "anchored_last_n_weeks"):
-            debug_msg += "  → MATCHED Case 1: Dynamic week window (WoW)\n"
+            debug_msg += "  â†' MATCHED Case 1: Dynamic week window (WoW)\n"
             week_col = mapping.get("week")
             debug_msg += f"    week_col: {week_col}\n"
             if week_col and week_col in base_df.columns:
@@ -1773,14 +1811,12 @@ def _run_aggregation(
                 st.write(debug_msg)
                 return group_df, overall_val
             else:
-                debug_msg += "    ⚠️ week_col missing or not in base_df.columns\n"
+                debug_msg += "    âš ï¸ week_col missing or not in base_df.columns\n"
 
-        # ---------------------------------------------
         # Case 2: Explicit weekly grouping → WoW
-        # ---------------------------------------------
         week_col = mapping.get("week")
         if "week" in group_by and week_col and week_col in base_df.columns:
-            debug_msg += "  → MATCHED Case 2: Week in group_by (WoW)\n"
+            debug_msg += "  â†' MATCHED Case 2: Week in group_by (WoW)\n"
             debug_msg += f"    week_col: {week_col}\n"
             debug_msg += f"    group_cols: {group_cols}\n"
             group_df, overall_val = _calculate_wow_growth(
@@ -1790,12 +1826,10 @@ def _run_aggregation(
             st.write(debug_msg)
             return group_df, overall_val
 
-        # ---------------------------------------------
         # Case 3: Year-over-year grouping → YoY
-        # ---------------------------------------------
         year_col = mapping.get("year")
         if "year" in group_by and year_col and year_col in base_df.columns:
-            debug_msg += "  → MATCHED Case 3: Year in group_by (YoY)\n"
+            debug_msg += "  â†' MATCHED Case 3: Year in group_by (YoY)\n"
             debug_msg += f"    year_col: {year_col}\n"
             group_df, overall_val = _calculate_yoy_growth(
                 base_df, spec, group_cols, year_col, total_col
@@ -1804,13 +1838,11 @@ def _run_aggregation(
             st.write(debug_msg)
             return group_df, overall_val
 
-        # ---------------------------------------------
         # Case 4: Period A vs B → for now, YoY fallback if year is present
-        # ---------------------------------------------
         period_a = compare.get("period_a")
         period_b = compare.get("period_b")
         if period_a and period_b and year_col and year_col in base_df.columns:
-            debug_msg += "  → MATCHED Case 4: Period A vs Period B (fallback YoY)\n"
+            debug_msg += "  â†' MATCHED Case 4: Period A vs Period B (fallback YoY)\n"
             group_df, overall_val = _calculate_yoy_growth(
                 base_df, spec, group_cols, year_col, total_col
             )
@@ -1818,10 +1850,8 @@ def _run_aggregation(
             st.write(debug_msg)
             return group_df, overall_val
 
-        # ---------------------------------------------
         # Fallback: no growth calculation possible
-        # ---------------------------------------------
-        debug_msg += "  → ⚠️ NO CASE MATCHED FOR GROWTH_RATE\n"
+        debug_msg += "  â†' âš ï¸ NO CASE MATCHED FOR GROWTH_RATE\n"
         st.write(debug_msg)
         return None, float("nan")
 
