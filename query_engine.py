@@ -3046,8 +3046,16 @@ def answer_question_from_df(
         print(f"  result: None")
     print(f"  numeric value: {numeric_value}")
     
-    # 3) Pivot-style reshaping for time dimensions
-    group_df = _reshape_for_display(group_df, spec)
+    # ===== NEW: PIVOT growth comparisons FIRST (before any other reshaping) =====
+    if group_df is not None and spec.get("aggregation") == "growth_rate":
+        print(f"\n[PIVOT] Attempting to pivot growth rate table...")
+        original_shape = group_df.shape
+        group_df = _pivot_growth_by_entity(group_df, spec)
+        print(f"[PIVOT] After pivot: shape changed from {original_shape} to {group_df.shape if group_df is not None else None}")
+    
+    # 3) Pivot-style reshaping for time dimensions (but skip if already pivoted)
+    if spec.get("aggregation") != "growth_rate":  # Skip normal reshape if growth_rate (already pivoted above)
+        group_df = _reshape_for_display(group_df, spec)  
 
     # 4) Format numeric columns
     if group_df is not None and not group_df.empty:
