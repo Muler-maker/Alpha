@@ -322,10 +322,47 @@ ALWAYS:
                 gb.append("week")
                 print(f"🔴 Added 'week' to group_by (WoW): {gb}")
         
+        # ===== NOW handle compare entities WITHIN growth_rate context =====
+        # Check if we're comparing two entities (DSD vs PI Medical, CA vs NCA)
+        if "compare" in q_lower or "vs" in q_lower or "versus" in q_lower:
+            compare = spec.get("compare") or {}
+            
+            # Distributor compare: DSD vs PI Medical
+            if "dsd" in q_lower and "pi medical" in q_lower:
+                print(f"🔴 DETECTED: Comparing DSD vs PI Medical within growth_rate context")
+                compare["entities"] = ["DSD", "PI Medical"]
+                compare["entity_type"] = "distributor"
+                
+                if "distributor" not in gb:
+                    gb.insert(0, "distributor")
+                    print(f"🔴 Added 'distributor' to group_by: {gb}")
+            
+            # Product compare: CA vs NCA
+            elif "ca" in q_lower and "nca" in q_lower:
+                print(f"🔴 DETECTED: Comparing CA vs NCA within growth_rate context")
+                compare["entities"] = ["CA", "NCA"]
+                compare["entity_type"] = "product_sold"
+                
+                if "product_sold" not in gb:
+                    gb.insert(0, "product_sold")
+                    print(f"🔴 Added 'product_sold' to group_by: {gb}")
+            
+            spec["compare"] = compare
+        
         spec["group_by"] = gb
+        print(f"🔴 Final group_by for growth_rate: {gb}")
+        print(f"🔴 Final aggregation: growth_rate")
+        
+        # IMPORTANT: Return early so we don't hit the old "compare" logic below
+        spec["_question_text"] = question
+        return spec
 
-    # Distributor compare: DSD vs PI Medical
+    # ===== OLD COMPARE LOGIC (only for non-growth comparisons) =====
+    # This now only runs if growth keywords were NOT detected
+    
+    # Distributor compare: DSD vs PI Medical (non-growth)
     if "compare" in q_lower and "dsd" in q_lower and "pi medical" in q_lower:
+        # Only use compare aggregation if NOT a growth question
         spec["aggregation"] = "compare"
         compare = spec.get("compare") or {}
         compare["entities"] = ["DSD", "PI Medical"]
@@ -343,7 +380,7 @@ ALWAYS:
 
         spec["group_by"] = gb
 
-    # Product compare: CA vs NCA
+    # Product compare: CA vs NCA (non-growth)
     if "compare" in q_lower and "ca" in q_lower and "nca" in q_lower:
         spec["aggregation"] = "compare"
         compare = spec.get("compare") or {}
