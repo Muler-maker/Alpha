@@ -1945,24 +1945,29 @@ def _run_aggregation(
     # GROWTH RATE (WoW / YoY) - WITH ENTITY FILTERING
     # ------------------------------------------------------------------
     if aggregation == "growth_rate":
-        debug_msg = ""  # ✅ INITIALIZE THIS FIRST
+        debug_msg = ""
         time_window = spec.get("time_window") or {}
 
-        # Defensive: normalize `compare` and `entities`
-        compare = spec.get("compare") or {}
+        # CRITICAL FIX: Defensive initialization of compare
+        compare = spec.get("compare")
         if compare is None:
             compare = {}
-        entities = compare.get("entities") or []   # <- never None
+            spec["compare"] = compare
+        
+        # Ensure entities is always a list, never None
+        entities = compare.get("entities")
+        if entities is None:
+            entities = []
         compare["entities"] = entities
-        spec["compare"] = compare
-
+        
         entity_type = compare.get("entity_type")
+        
         debug_msg += f"  time_window.mode: {time_window.get('mode')}\n"
         debug_msg += f"  compare.entities: {entities}\n"
         debug_msg += f"  compare.entity_type: {entity_type}\n"
 
         # --------- STEP 1: Filter by specific entities if comparing ---------
-        if entities and entity_type:
+        if entities and entity_type:  # entities is now guaranteed to be a list
             entity_col = mapping.get(entity_type)
             debug_msg += f"  entity_col from mapping: {entity_col}\n"
 
@@ -2010,7 +2015,7 @@ def _run_aggregation(
                     base_df, spec, group_cols, week_col, total_col
                 )
                 debug_msg += f"    Result shape: {group_df.shape if group_df is not None else None}\n"
-                print(debug_msg)  # Print instead of st.write for now
+                print(debug_msg)
                 return group_df, overall_val
 
         # Case 2: Explicit weekly grouping → WoW
@@ -2053,7 +2058,7 @@ def _run_aggregation(
         # Fallback: no growth calculation possible
         debug_msg += "  → ⚠️ NO CASE MATCHED FOR GROWTH_RATE\n"
         print(debug_msg)
-        return None, float("nan")   
+        return None, float("nan")
 # ------------------------------------------------------------------
     # COMPARE MODE (entity or time comparison)
     # ------------------------------------------------------------------
