@@ -1859,6 +1859,7 @@ def _build_metadata_snippet(df_filtered: pd.DataFrame, spec: Dict[str, Any]) -> 
         bullets += "\n- … (additional events exist for these weeks but are not shown here)"
 
     return intro + bullets
+
 def _run_aggregation(
     df_filtered: pd.DataFrame,
     spec: Dict[str, Any],
@@ -1946,11 +1947,21 @@ def _run_aggregation(
         print(f"  Total volume: {total_volume}")
         
         return top_df, total_volume
+
     # ------------------------------------------------------------------
     # GROWTH RATE (WoW / YoY) - WITH ENTITY FILTERING
     # ------------------------------------------------------------------
     if aggregation == "growth_rate":
-        debug_msg += "\nâœ… GROWTH_RATE aggregation detected\n"
+        debug_msg = f"""
+🔴 _run_aggregation() DEBUG:
+  aggregation: {aggregation}
+  group_by: {group_by}
+  group_cols: {group_cols}
+  total_col: {total_col}
+  base_df.shape: {base_df.shape}
+  time_window.mode: {spec.get('time_window', {}).get('mode')}
+"""
+        debug_msg += "\n✅ GROWTH_RATE aggregation detected\n"
 
         time_window = spec.get("time_window") or {}
         compare = spec.get("compare") or {}
@@ -2002,7 +2013,7 @@ def _run_aggregation(
 
         # Case 1: Dynamic week window → always WoW
         if time_window.get("mode") in ("last_n_weeks", "anchored_last_n_weeks"):
-            debug_msg += "  â†' MATCHED Case 1: Dynamic week window (WoW)\n"
+            debug_msg += "  → MATCHED Case 1: Dynamic week window (WoW)\n"
             week_col = mapping.get("week")
             debug_msg += f"    week_col: {week_col}\n"
             if week_col and week_col in base_df.columns:
@@ -2012,13 +2023,11 @@ def _run_aggregation(
                 debug_msg += f"    Result shape: {group_df.shape if group_df is not None else None}\n"
                 st.write(debug_msg)
                 return group_df, overall_val
-            else:
-                debug_msg += "    âš ï¸ week_col missing or not in base_df.columns\n"
 
         # Case 2: Explicit weekly grouping → WoW
         week_col = mapping.get("week")
         if "week" in group_by and week_col and week_col in base_df.columns:
-            debug_msg += "  â†' MATCHED Case 2: Week in group_by (WoW)\n"
+            debug_msg += "  → MATCHED Case 2: Week in group_by (WoW)\n"
             debug_msg += f"    week_col: {week_col}\n"
             debug_msg += f"    group_cols: {group_cols}\n"
             group_df, overall_val = _calculate_wow_growth(
@@ -2031,7 +2040,7 @@ def _run_aggregation(
         # Case 3: Year-over-year grouping → YoY
         year_col = mapping.get("year")
         if "year" in group_by and year_col and year_col in base_df.columns:
-            debug_msg += "  â†' MATCHED Case 3: Year in group_by (YoY)\n"
+            debug_msg += "  → MATCHED Case 3: Year in group_by (YoY)\n"
             debug_msg += f"    year_col: {year_col}\n"
             group_df, overall_val = _calculate_yoy_growth(
                 base_df, spec, group_cols, year_col, total_col
@@ -2044,7 +2053,7 @@ def _run_aggregation(
         period_a = compare.get("period_a")
         period_b = compare.get("period_b")
         if period_a and period_b and year_col and year_col in base_df.columns:
-            debug_msg += "  â†' MATCHED Case 4: Period A vs Period B (fallback YoY)\n"
+            debug_msg += "  → MATCHED Case 4: Period A vs Period B (fallback YoY)\n"
             group_df, overall_val = _calculate_yoy_growth(
                 base_df, spec, group_cols, year_col, total_col
             )
@@ -2053,7 +2062,7 @@ def _run_aggregation(
             return group_df, overall_val
 
         # Fallback: no growth calculation possible
-        debug_msg += "  â†' âš ï¸ NO CASE MATCHED FOR GROWTH_RATE\n"
+        debug_msg += "  → ⚠️ NO CASE MATCHED FOR GROWTH_RATE\n"
         st.write(debug_msg)
         return None, float("nan")
 
@@ -2201,7 +2210,6 @@ def _run_aggregation(
     # PROJECTION VS ACTUAL
     # ------------------------------------------------------------------
     if aggregation == "projection_vs_actual":
-        # 🔎 Basic debug
         print("\n🔴 PROJECTION_VS_ACTUAL aggregation()")
         print(f"  group_by: {group_by}")
         print(f"  initial group_cols (from mapping): {group_cols}")
@@ -2214,7 +2222,6 @@ def _run_aggregation(
         print(f"  actual_col: {actual_col}")
         print(f"  proj_col: {proj_col}")
 
-        # If we don't even have the columns, we really can't do anything
         if not actual_col or actual_col not in df_filtered.columns:
             print("  ⚠️ Missing actual_col in df_filtered → aborting projection_vs_actual")
             return None, float("nan")
@@ -2222,8 +2229,6 @@ def _run_aggregation(
             print("  ⚠️ Missing proj_col in df_filtered → aborting projection_vs_actual")
             return None, float("nan")
 
-        # ✅ If the user asked "per week", prefer the activity/projection week
-        #    rather than the production "Week" column.
         if "week" in group_by:
             if "Week number for Activity vs Projection" in df_filtered.columns:
                 new_group_cols: List[str] = []
@@ -2234,10 +2239,7 @@ def _run_aggregation(
                         new_group_cols.append(mapping[field])
                 print(f"  Remapped group_cols to activity/projection week: {new_group_cols}")
                 group_cols = new_group_cols
-            else:
-                print("  ⚠️ 'week' in group_by but no 'Week number for Activity vs Projection' → using default mapping")
 
-        # Keys that uniquely identify a projection row
         proj_keys = [
             c
             for c in [
@@ -2254,7 +2256,6 @@ def _run_aggregation(
         df_actual = df_filtered
 
         if proj_keys:
-            # One row per (Year, ProjWeek, Week number for Activity vs Projection, Distributor, Product)
             df_proj = df_filtered.drop_duplicates(subset=proj_keys)
         else:
             df_proj = df_filtered
@@ -2295,7 +2296,6 @@ def _run_aggregation(
                 }
             )
 
-        # Fill NaNs and compute deltas
         merged["Actual_mCi"] = merged["Actual_mCi"].fillna(0.0)
         merged["Projected_mCi"] = merged["Projected_mCi"].fillna(0.0)
         merged["Delta_mCi"] = merged["Actual_mCi"] - merged["Projected_mCi"]
@@ -2312,8 +2312,6 @@ def _run_aggregation(
         total_actual = float(merged["Actual_mCi"].sum())
         print(f"  total_actual: {total_actual}")
         return merged, total_actual
-
-
 
     # ------------------------------------------------------------------
     # SUM (default)
@@ -2378,7 +2376,6 @@ def _run_aggregation(
 
         share = numerator / denominator
         return None, float(share)
-
 
 def _build_chart_block(
     group_df: pd.DataFrame,
