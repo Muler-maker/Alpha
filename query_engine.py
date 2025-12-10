@@ -3117,12 +3117,12 @@ def answer_question_from_df(
     # 1) Build & normalize the spec
     spec = _interpret_question_with_llm(question, history=history)
 
-    # --- FIX: Define aggregation IMMEDIATELY so it is available everywhere ---
+    # --- CRITICAL FIX: Define aggregation variable IMMEDIATELY here ---
     aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
-    # -----------------------------------------------------------------------
+    # ----------------------------------------------------------------
 
     print(f"\n[SPEC] After interpretation:")
-    print(f"  aggregation: {aggregation}")  # Use the var we just defined
+    print(f"  aggregation: {aggregation}")
     print(f"  group_by: {spec.get('group_by')}")
     print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
     print(f"  filters.distributor: {spec.get('filters', {}).get('distributor')}")
@@ -3185,7 +3185,7 @@ def answer_question_from_df(
     # 2) Apply filters & run aggregation
     spec_for_filtering = spec.copy()
 
-    # Update aggregation var just in case spec changed (e.g. inside heuristics)
+    # Re-read aggregation just in case a helper modified spec (safe fallback)
     aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
 
     if aggregation == "growth_rate":
@@ -3221,7 +3221,7 @@ def answer_question_from_df(
         print(f"[PIVOT] After pivot: shape changed from {original_shape} to {group_df.shape if group_df is not None else None}")
 
     # 3) Pivot-style reshaping for time dimensions (but skip if already pivoted)
-    if aggregation != "growth_rate":  # Skip normal reshape if growth_rate (already pivoted above)
+    if aggregation != "growth_rate":
         group_df = _reshape_for_display(group_df, spec)
 
     # 4) Format numeric columns
@@ -3338,7 +3338,7 @@ def answer_question_from_df(
 
     ship_mode = spec.get("shipping_status_mode", "countable")
     if ship_mode == "countable":
-        status_text = "countable orders (shipped, partially shipped, shipped late, or being processed)"
+        status_text = "countable orders"
     elif ship_mode == "cancelled":
         status_text = "cancelled or rejected orders"
     elif ship_mode == "explicit":
@@ -3361,9 +3361,7 @@ def answer_question_from_df(
                 f"Could not compute top {n_value} {rank_entity}s for {filter_text}."
             )
         else:
-            # Try to identify entity column cleanly for the text
             entity_display = str(rank_entity).replace("_", " ").title()
-            
             preview_md = group_df.to_markdown(index=False)
             
             header = (
@@ -3387,7 +3385,7 @@ def answer_question_from_df(
             )
             core_answer = header + (preview_md or "")
 
-    # SUM (and basic comparison tables)
+    # SUM
     elif aggregation in ("sum_mci", "compare"):
         if group_df is None:
             core_answer = (
@@ -3466,7 +3464,6 @@ def answer_question_from_df(
                 )
         else:
             cols = list(group_df.columns)
-
             # Week-over-week growth table
             if "WoW_Growth_%" in cols or any("Growth" in c for c in cols):
                 preview_md = group_df.to_markdown(index=False)
@@ -3536,7 +3533,6 @@ def answer_question_from_df(
         refined_answer = final_answer
 
     return refined_answer
-
 # -------------------------
 # Dynamic week window logic
 # -------------------------
