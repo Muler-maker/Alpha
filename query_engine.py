@@ -1859,7 +1859,6 @@ def _build_metadata_snippet(df_filtered: pd.DataFrame, spec: Dict[str, Any]) -> 
         bullets += "\n- … (additional events exist for these weeks but are not shown here)"
 
     return intro + bullets
-
 def _run_aggregation(
     df_filtered: pd.DataFrame,
     spec: Dict[str, Any],
@@ -1889,41 +1888,41 @@ def _run_aggregation(
     if aggregation == "top_n":
         n_value = spec.get("_top_n_value", 10)
         rank_entity = spec.get("_top_n_entity")
-        
+
         print(f"\n🔴 TOP_N EXECUTION:")
         print(f"  n_value: {n_value}")
         print(f"  rank_entity: {rank_entity}")
         print(f"  group_by: {group_by}")
         print(f"  group_cols: {group_cols}")
         print(f"  df_filtered.shape: {base_df.shape}")
-        
+
         if not rank_entity or not group_cols:
-            print(f"  ❌ Missing rank_entity or group_cols")
+            print("  ❌ Missing rank_entity or group_cols")
             return None, float("nan")
-        
+
         # Make sure the entity column is in group_cols
         entity_col = mapping.get(rank_entity)
         print(f"  entity_col from mapping: {entity_col}")
-        
+
         if not entity_col or entity_col not in base_df.columns:
             print(f"  ❌ entity_col '{entity_col}' not in base_df.columns")
             print(f"  Available columns: {list(base_df.columns)[:10]}")
             return None, float("nan")
-        
+
         # Group by entity and sum totals
         grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].sum()
-        
+
         print(f"  After groupby: shape={grouped_df.shape}")
-        
+
         # Sort by total_col descending
         grouped_df = grouped_df.sort_values(total_col, ascending=False)
-        
+
         # Take top N
         top_df = grouped_df.head(n_value).reset_index(drop=True)
-        
+
         # Add rank column
         top_df.insert(0, "Rank", range(1, len(top_df) + 1))
-        
+
         # Format the entity column (clean up long names)
         if entity_col in top_df.columns:
             name_simplifications = {
@@ -1936,16 +1935,16 @@ def _run_aggregation(
                 .str.strip()
                 .apply(lambda x: name_simplifications.get(x.lower(), x))
             )
-        
+
         # Round mCi values
         top_df[total_col] = top_df[total_col].round(0).astype(int)
-        
+
         # Calculate total volume
         total_volume = float(base_df[total_col].sum())
-        
+
         print(f"  Top {n_value} result: shape={top_df.shape}")
         print(f"  Total volume: {total_volume}")
-        
+
         return top_df, total_volume
 
     # ------------------------------------------------------------------
@@ -1976,7 +1975,7 @@ def _run_aggregation(
         if entities and entity_type:
             entity_col = mapping.get(entity_type)
             debug_msg += f"  entity_col from mapping: {entity_col}\n"
-            
+
             if entity_col and entity_col in base_df.columns:
                 # Build OR mask for all entities in the compare list
                 mask = None
@@ -1989,7 +1988,7 @@ def _run_aggregation(
                     else:
                         mask = mask | cur
                     debug_msg += f"    Checking entity '{ent}': {cur.sum()} rows\n"
-                
+
                 if mask is not None:
                     base_df = base_df[mask]
                     debug_msg += f"  After entity filtering: {len(base_df)} rows remaining\n"
@@ -2376,7 +2375,7 @@ def _run_aggregation(
 
         share = numerator / denominator
         return None, float(share)
-        
+
 def _build_chart_block(
     group_df: pd.DataFrame,
     spec: Dict[str, Any],
