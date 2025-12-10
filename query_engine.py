@@ -1248,6 +1248,12 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
 
     mapping = _get_mapping(df)
     filters = spec.get("filters", {}) or {}
+    
+    # SAFETY: Ensure all filter values are properly typed
+    if filters is None:
+        filters = {}
+        spec["filters"] = filters
+    
     result = df.copy()
 
     def contains(col_name: str, value: str) -> pd.Series:
@@ -1258,7 +1264,6 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     # Customer
     if filters.get("customer") and mapping.get("customer"):
         result = result[contains(mapping["customer"], filters["customer"])]
-    filters = spec.get("filters", {}) or {}
 
     # --- NEW PROTECTION: avoid broken multi-entity distributor filters ---
     dist_val = filters.get("distributor")
@@ -1267,10 +1272,9 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
         if (" vs " in lv or " and " in lv) and "dsd" in lv and "pi medical" in lv:
             print(f"🧹 Dropping multi-entity distributor filter: '{dist_val}'")
             filters["distributor"] = None
-    # --------------------------------------------------------------------
+    # ----
 
-    result = df.copy()
-    # ✅ FIXED Distributor Filter (supports single + multi-entity correctly)
+    # âœ… FIXED Distributor Filter (supports single + multi-entity correctly)
     if filters.get("distributor") and mapping.get("distributor"):
         dist_val = filters["distributor"]
         col = mapping["distributor"]
@@ -1282,11 +1286,11 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
                 mask = cur if mask is None else (mask | cur)
             return result[mask]
 
-        # Case 1: Proper Python list → ["DSD", "PI Medical"]
+        # Case 1: Proper Python list â†' ["DSD", "PI Medical"]
         if isinstance(dist_val, list):
             result = _apply_multi_distributor(dist_val)
 
-        # Case 2: String that LOOKS like a list → "['DSD', 'PI Medical']"
+        # Case 2: String that LOOKS like a list â†' "['DSD', 'PI Medical']"
         elif isinstance(dist_val, str):
             text = dist_val.strip()
 
@@ -1302,10 +1306,10 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
             if parsed_list:
                 result = _apply_multi_distributor(parsed_list)
             else:
-                # ✅ Final fallback: single distributor string
+                # Final fallback: single distributor string
                 result = result[result[col].astype(str).str.contains(text, case=False, na=False)]
 
-        # Case 3: Any other type → treat as single value safely
+        # Case 3: Any other type â†' treat as single value safely
         else:
             result = result[result[col].astype(str).str.contains(str(dist_val), case=False, na=False)]
 
@@ -1444,36 +1448,26 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
         )
         result = result[mask]
 
-    # ❌ IMPORTANT: we removed the old block that did:
-    #    entities = compare.get("entities") ...
-    #    result = result[result[col_name].isin(entities)]
-    # That was wiping out rows for fuzzy entities like "DSD Pharma GmbH" vs "DSD".
-
     # --- Shipping status filter ---
     ship_mode = spec.get("shipping_status_mode", "countable")
     ship_col = mapping.get("shipping_status")
 
     if ship_col:
         if ship_mode == "countable":
-            # Only "normal" shipped/processing orders
             result = result[result[ship_col].isin(COUNTABLE_STATUSES)]
-
         elif ship_mode == "cancelled":
-            # Only cancellations
             result = result[result[ship_col].isin(CANCELLED_STATUSES)]
-
         elif ship_mode == "explicit" and spec.get("shipping_status_list"):
-            # Explicit list of statuses
             result = result[result[ship_col].isin(spec["shipping_status_list"])]
-
         elif ship_mode == "all":
-            # Do NOT filter by status – keep everything
-            pass
+            pass  # Don't filter
 
     # --- Dynamic week window (last N weeks logic) ---
-    time_window = spec.get("time_window") or {}
-    if time_window.get("mode"):
-        result = _apply_time_window(result, spec)
+    # CRITICAL: Only apply if time_window is properly configured
+    time_window = spec.get("time_window")
+    if time_window is not None and isinstance(time_window, dict):
+        if time_window.get("mode"):
+            result = _apply_time_window(result, spec)
 
     return result
 def _calculate_yoy_growth(
