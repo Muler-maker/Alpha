@@ -255,350 +255,101 @@ ALWAYS:
         st.warning(f"LLM error: {e}")
         spec = _interpret_question_fallback(question)
 
+    # SAFETY: Ensure spec has all required keys with proper types
+    if spec is None:
+        spec = {}
+    
+    spec.setdefault("filters", {})
+    spec.setdefault("group_by", [])
+    spec.setdefault("time_window", {})
+    spec.setdefault("compare", {})
+    spec.setdefault("shipping_status_mode", "countable")
+    spec.setdefault("shipping_status_list", [])
+    
+    # Ensure sub-dicts are dicts, not None
+    if spec["filters"] is None:
+        spec["filters"] = {}
+    if spec["time_window"] is None:
+        spec["time_window"] = {}
+    if spec["compare"] is None:
+        spec["compare"] = {}
+    
     # Apply any existing date heuristics
     spec = _augment_spec_with_date_heuristics(question, spec)
 
-    # 🔧 Extra post-processing for patterns that the LLM often misses
-    q_lower = (question or "").lower()
-
+    # Extra post-processing for patterns that the LLM often misses
+    q_lower = str(question or "").lower()  # SAFETY: ensure q_lower is string
+    
     # Always keep the raw question text for downstream helpers
     spec["_question_text"] = question
     
-    # Projection vs actual questions – LLM safety net
+    # Projection vs actual questions
     proj_keywords = ["projection", "projections", "forecast", "budget", "plan"]
     actual_keywords = ["actual", "actuals", "vs", "versus", "variance", "gap"]
 
     if any(k in q_lower for k in proj_keywords) and any(k in q_lower for k in actual_keywords):
         spec["aggregation"] = "projection_vs_actual"
 
-    # ===== CRITICAL FIX: Force growth_rate for growth-related questions =====
+    # GROWTH RATE DETECTION
     growth_keywords = [
         "growth rate", "growth rates", "weekly growth", "week-over-week",
         "wow", "yoy", "year-over-year", "yearly growth", "growth per week",
-        "growth by week"
+        "growth by week", "last 6 weeks", "previous 6 weeks"  # ADDED THIS
     ]
+    
     if any(kw in q_lower for kw in growth_keywords):
         print(f"🔴 FORCING growth_rate aggregation (detected keywords)")
         spec["aggregation"] = "growth_rate"
         
-        # Make sure we have the right group_by for time dimension
         gb = spec.get("group_by") or []
+        if not isinstance(gb, list):
+            gb = []
         
-        # ===== YEAR-OVER-YEAR: Check for year-to-year comparisons =====
-        yoy_patterns = [
-            "from 2024 to 2025",
-            "from 2023 to 2024",
-            "from 2025 to 2026",
-            "compared to 2024",
-            "compared to 2023",
-            "compared to 2025",
-            "vs 2024",
-            "vs 2023",
-            "vs 2025",
-            "versus 2024",
-            "versus 2023",
-            "versus 2025",
-            "year-over-year",
-            "yoy",
-            "yearly growth"
-        ]
-        
-        if any(pat in q_lower for pat in yoy_patterns):
-            print(f"🔴 DETECTED Year-over-Year pattern")
-            if "year" not in gb:
-                gb.append("year")
-                print(f"🔴 Added 'year' to group_by (YoY): {gb}")
-        
-        # ===== WEEK-OVER-WEEK: Check for weekly patterns =====
-        elif any(p in q_lower for p in ["per week", "by week", "weekly breakdown", "weekly"]):
-            print(f"🔴 DETECTED Week-over-Week pattern (per week language)")
+        # Check for "last N weeks" / "previous N weeks" pattern
+        m_window = re.search(r"(last|previous)\s+(\d+)\s+weeks?", q_lower)
+        if m_window:
+            print(f"🔴 DETECTED: Last/previous N weeks pattern")
+            n_weeks = int(m_window.group(2))
+            tw = spec.get("time_window") or {}
+            if not isinstance(tw, dict):
+                tw = {}
+            tw["mode"] = "last_n_weeks"
+            tw["n_weeks"] = n_weeks
+            tw["anchor"] = {"year": None, "week": None}
+            spec["time_window"] = tw
+            
             if "week" not in gb:
-                gb.append("week")
-                print(f"🔴 Added 'week' to group_by (WoW): {gb}")
-        
-        elif any(w in q_lower for w in ["week-over-week", "wow"]):
-            print(f"🔴 DETECTED Week-over-Week pattern (WoW language)")
-            if "week" not in gb:
-                gb.append("week")
-                print(f"🔴 Added 'week' to group_by (WoW): {gb}")
-        
-        # ===== NOW handle compare entities WITHIN growth_rate context =====
-        # Check if we're comparing two entities (DSD vs PI Medical, CA vs NCA)
-        if "compare" in q_lower or "vs" in q_lower or "versus" in q_lower:
-            compare = spec.get("compare") or {}
-            
-            # Distributor compare: DSD vs PI Medical
-            if "dsd" in q_lower and "pi medical" in q_lower:
-                print(f"🔴 DETECTED: Comparing DSD vs PI Medical within growth_rate context")
-                compare["entities"] = ["DSD", "PI Medical"]
-                compare["entity_type"] = "distributor"
-                
-                if "distributor" not in gb:
-                    gb.insert(0, "distributor")
-                    print(f"🔴 Added 'distributor' to group_by: {gb}")
-            
-            # Product compare: CA vs NCA
-            elif "ca" in q_lower and "nca" in q_lower:
-                print(f"🔴 DETECTED: Comparing CA vs NCA within growth_rate context")
-                compare["entities"] = ["CA", "NCA"]
-                compare["entity_type"] = "product_sold"
-                
-                if "product_sold" not in gb:
-                    gb.insert(0, "product_sold")
-                    print(f"🔴 Added 'product_sold' to group_by: {gb}")
-            
-            spec["compare"] = compare
+                gb.insert(0, "week")
+            print(f"🔴 Set time_window mode='last_n_weeks', n_weeks={n_weeks}")
         
         spec["group_by"] = gb
-        print(f"🔴 Final group_by for growth_rate: {gb}")
-        print(f"🔴 Final aggregation: growth_rate")
-        
-        # IMPORTANT: Return early so we don't hit the old "compare" logic below
         spec["_question_text"] = question
         return spec
 
-    # ===== TOP N DETECTION =====
+    # TOP N DETECTION
     top_n_keywords = [
         "top ", "top10", "top 10", "top5", "top 5", "top3", "top 3",
         "highest", "largest", "biggest", "most ordered", "most volume",
-        "who ordered the most", "which customers ordered", "which distributors ordered",
-        "which countries ordered", "ranking", "ranked", "rank"
     ]
     
-    print(f"\n🔴 TOP N DETECTION CHECK:")
-    print(f"  q_lower: {q_lower}")
-    print(f"  Checking {len(top_n_keywords)} keywords")
-    
     top_n_detected = any(kw in q_lower for kw in top_n_keywords)
-    print(f"  top_n_detected: {top_n_detected}")
     
     if top_n_detected:
         print(f"🔴 DETECTED: Top N question")
         spec["aggregation"] = "top_n"
-        
-        gb = spec.get("group_by") or []
-        
-        # Extract N value (default to 10)
-        n_value = 10
-        m_n = re.search(r"top\s+(\d+)", q_lower)
-        if m_n:
-            try:
-                n_value = int(m_n.group(1))
-                print(f"🔴 Extracted N={n_value}")
-            except Exception:
-                pass
-        
-        spec["_top_n_value"] = n_value
-        
-        # Determine what entity to rank
-        rank_entity = None
-        
-        if "customer" in q_lower:
-            rank_entity = "customer"
-            if "customer" not in gb:
-                gb.insert(0, "customer")
-            print(f"🔴 Detected entity: customer")
-        elif "distributor" in q_lower:
-            rank_entity = "distributor"
-            if "distributor" not in gb:
-                gb.insert(0, "distributor")
-            print(f"🔴 Detected entity: distributor")
-        elif "country" in q_lower:
-            rank_entity = "country"
-            if "country" not in gb:
-                gb.insert(0, "country")
-            print(f"🔴 Detected entity: country")
-        elif "region" in q_lower:
-            rank_entity = "region"
-            if "region" not in gb:
-                gb.insert(0, "region")
-            print(f"🔴 Detected entity: region")
-        elif "product" in q_lower:
-            if "sold as" in q_lower or "ordered" in q_lower:
-                rank_entity = "product_sold"
-                if "product_sold" not in gb:
-                    gb.insert(0, "product_sold")
-            else:
-                rank_entity = "product_catalogue"
-                if "product_catalogue" not in gb:
-                    gb.insert(0, "product_catalogue")
-            print(f"🔴 Detected entity: {rank_entity}")
-        else:
-            print(f"🔴 WARNING: No entity detected, defaulting to customer")
-            rank_entity = "customer"
-            if "customer" not in gb:
-                gb.insert(0, "customer")
-        
-        spec["_top_n_entity"] = rank_entity
-        spec["group_by"] = gb
-        
-        print(f"🔴 Top N setup complete: entity={rank_entity}, N={n_value}, group_by={gb}")
-        print(f"🔴 Returning spec with aggregation='top_n'")
-        
         spec["_question_text"] = question
         return spec
-# In answer_question_from_df(), find the section that builds core_answer
-    # (around line 2150, in the "# 8) Build the core textual answer by aggregation type" section)
-    
-    # Add this BEFORE the existing "if aggregation in ("sum_mci", "compare"):" block:
 
-    # TOP N
-    if aggregation == "top_n":
-        rank_entity = spec.get("_top_n_entity", "entity")
-        n_value = spec.get("_top_n_value", 10)
-        
-        if group_df is None:
-            core_answer = (
-                f"Could not compute top {n_value} {rank_entity}s for {filter_text}."
-            )
-        else:
-            entity_col = None
-            for col in group_df.columns:
-                if col.lower() in ["customer", "distributor", "country", "region", 
-                                   "catalogue description (sold as)", "catalogue description"]:
-                    entity_col = col
-                    break
-            
-            preview_md = group_df.to_markdown(index=False)
-            
-            entity_display = rank_entity.replace("_", " ").title()
-            
-            header = (
-                f"Here are the **top {n_value} {entity_display}s** by order volume "
-                f"for {filter_text}. The total volume across all {entity_display}s is "
-                f"**{numeric_value:,.0f} mCi**.\n\n"
-            )
-            core_answer = header + (preview_md or "")
-    # ===== OLD COMPARE LOGIC (only for non-growth comparisons) =====
-    # This now only runs if growth keywords were NOT detected
-    
-    # Distributor compare: DSD vs PI Medical (non-growth)
-    if "compare" in q_lower and "dsd" in q_lower and "pi medical" in q_lower:
-        # Only use compare aggregation if NOT a growth question
-        spec["aggregation"] = "compare"
-        compare = spec.get("compare") or {}
-        compare["entities"] = ["DSD", "PI Medical"]
-        compare["entity_type"] = "distributor"
-        spec["compare"] = compare
-
-        gb = spec.get("group_by") or []
-
-        if any(t in q_lower for t in ["per year", "by year", "yearly", "each year", "in years"]):
-            if "year" not in gb:
-                gb.append("year")
-
-        if "distributor" not in gb:
-            gb.insert(0, "distributor")
-
-        spec["group_by"] = gb
-
-    # Product compare: CA vs NCA (non-growth)
-    if "compare" in q_lower and "ca" in q_lower and "nca" in q_lower:
-        spec["aggregation"] = "compare"
-        compare = spec.get("compare") or {}
-        compare["entities"] = ["CA", "NCA"]
-        compare["entity_type"] = "product_sold"
-        spec["compare"] = compare
-
-        gb = spec.get("group_by") or []
-
-        if any(t in q_lower for t in ["per year", "by year", "yearly", "each year", "in years"]):
-            if "year" not in gb:
-                gb.append("year")
-
-        if "product_sold" not in gb:
-            gb.insert(0, "product_sold")
-
-        spec["group_by"] = gb
-
-    # Mark "why / reason / drop" style questions
-    why_keywords = ["why", "reason", "reasons", "cause", "drop", "decline", "decrease", "went down"]
-    is_why = any(k in q_lower for k in why_keywords)
-
-    if is_why:
-        spec["_why_question"] = True
-        filters = spec.get("filters") or {}
-        spec["filters"] = filters
-
-        if filters.get("year"):
-            try:
-                spec["_why_year"] = int(filters["year"])
-            except Exception:
-                pass
-        if filters.get("week"):
-            try:
-                spec["_why_week"] = int(filters["week"])
-            except Exception:
-                pass
-
-        # Fix awkward "all statuses" + shipping-status breakdowns
-        if spec.get("shipping_status_mode") == "all":
-            spec["shipping_status_mode"] = "countable"
-            spec["shipping_status_list"] = []
-
-        gb = spec.get("group_by") or []
-        if gb == ["shipping_status"]:
-            gb = []
-        elif "shipping_status" in gb and len(gb) > 1:
-            gb = [g for g in gb if g != "shipping_status"]
-        spec["group_by"] = gb
-
-    # Global safety net: "per year" wording
-    if any(t in q_lower for t in ["per year", "by year", "yearly", "each year", "in years"]):
-        gb = spec.get("group_by") or []
-        if "year" not in gb:
-            gb.append("year")
-        spec["group_by"] = gb
-
-    q_stripped = (question or "").strip().lower()
-    if q_stripped.startswith("why"):
-        spec["_why_question"] = True
-        filters = spec.get("filters") or {}
-        spec["filters"] = filters
-        if filters.get("year"):
-            try:
-                spec["_why_year"] = int(filters["year"])
-            except Exception:
-                pass
-        if filters.get("week"):
-            try:
-                spec["_why_week"] = int(filters["week"])
-            except Exception:
-                pass
-
-    # Hard override for "drop in week X (of Y)" style questions
+    # DSD heuristic fix
     filters = spec.get("filters") or {}
-    spec["filters"] = filters
-
-    if any(k in q_lower for k in ["drop", "demand"]) and "week" in q_lower:
-        m = re.search(r"week\s+(\d{1,2})\s*(?:of\s+)?(20[2-3][0-9])?", q_lower)
-        if m:
-            week_val = int(m.group(1))
-            filters["week"] = week_val
-
-            year_str = m.group(2)
-            if year_str:
-                filters["year"] = int(year_str)
-
-            spec["_why_question"] = True
-            spec["_why_week"] = week_val
-            if year_str:
-                spec["_why_year"] = int(year_str)
-    
-    # Heuristic fix: questions mentioning "DSD" refer to the DSD distributor
-    q_lower = (question or "").lower()
-    filters = spec.get("filters") or {}
-
     if "dsd" in q_lower:
-        # Clear any (wrong) customer filter the LLM might have set
         if filters.get("customer"):
             filters["customer"] = None
-
-        # If no distributor filter is set yet, assume DSD distributor
         if not filters.get("distributor"):
             filters["distributor"] = "DSD"
-
     spec["filters"] = filters
+    
+    spec["_question_text"] = question
     return spec
 
 def _interpret_question_fallback(
