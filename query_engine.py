@@ -1880,7 +1880,6 @@ def _run_aggregation(
 
     aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
     group_by = spec.get("group_by") or []
-
     group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
 
     # ------------------------------------------------------------------
@@ -1947,22 +1946,6 @@ def _run_aggregation(
         print(f"  Total volume: {total_volume}")
         
         return top_df, total_volume
-
-    # ------------------------------------------------------------------
-    # REST OF AGGREGATIONS (growth_rate, compare, sum_mci, etc.)
-    # ------------------------------------------------------------------
-    # [All your existing code continues here...]
-
-    debug_msg = f"""
-🔴 _run_aggregation() DEBUG:
-  aggregation: {aggregation}
-  group_by: {group_by}
-  group_cols: {group_cols}
-  total_col: {total_col}
-  base_df.shape: {base_df.shape}
-  time_window.mode: {spec.get('time_window', {}).get('mode')}
-"""
-
     # ------------------------------------------------------------------
     # GROWTH RATE (WoW / YoY) - WITH ENTITY FILTERING
     # ------------------------------------------------------------------
