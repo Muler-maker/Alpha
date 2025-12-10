@@ -1947,10 +1947,11 @@ def _run_aggregation(
 
         return top_df, total_volume
 
-    # ------------------------------------------------------------------
+ # ------------------------------------------------------------------
     # GROWTH RATE (WoW / YoY) - WITH ENTITY FILTERING
     # ------------------------------------------------------------------
     if aggregation == "growth_rate":
+        debug_msg = ""  # ✅ INITIALIZE THIS FIRST
         time_window = spec.get("time_window") or {}
 
         # Defensive: normalize `compare` and `entities`
@@ -2015,7 +2016,7 @@ def _run_aggregation(
                     base_df, spec, group_cols, week_col, total_col
                 )
                 debug_msg += f"    Result shape: {group_df.shape if group_df is not None else None}\n"
-                st.write(debug_msg)
+                print(debug_msg)  # Print instead of st.write for now
                 return group_df, overall_val
 
         # Case 2: Explicit weekly grouping → WoW
@@ -2028,7 +2029,7 @@ def _run_aggregation(
                 base_df, spec, group_cols, week_col, total_col
             )
             debug_msg += f"    Result shape: {group_df.shape if group_df is not None else None}\n"
-            st.write(debug_msg)
+            print(debug_msg)
             return group_df, overall_val
 
         # Case 3: Year-over-year grouping → YoY
@@ -2040,7 +2041,7 @@ def _run_aggregation(
                 base_df, spec, group_cols, year_col, total_col
             )
             debug_msg += f"    Result shape: {group_df.shape if group_df is not None else None}\n"
-            st.write(debug_msg)
+            print(debug_msg)
             return group_df, overall_val
 
         # Case 4: Period A vs B → for now, YoY fallback if year is present
@@ -2052,14 +2053,13 @@ def _run_aggregation(
                 base_df, spec, group_cols, year_col, total_col
             )
             debug_msg += f"    Result shape: {group_df.shape if group_df is not None else None}\n"
-            st.write(debug_msg)
+            print(debug_msg)
             return group_df, overall_val
 
         # Fallback: no growth calculation possible
         debug_msg += "  → ⚠️ NO CASE MATCHED FOR GROWTH_RATE\n"
-        st.write(debug_msg)
-        return None, float("nan")
-
+        print(debug_msg)
+        return None, float("nan")   
 # ------------------------------------------------------------------
     # COMPARE MODE (entity or time comparison)
     # ------------------------------------------------------------------
