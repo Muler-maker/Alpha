@@ -2806,6 +2806,105 @@ def _inject_customer_from_question(df: pd.DataFrame, spec: Dict[str, Any]) -> Di
     
     print(f"  [NOT FOUND] No entity match")
     return spec
+# Add these TWO functions right BEFORE answer_question_from_df()
+# (around line 1750-1800, before the big answer_question_from_df function)
+
+def _pivot_growth_by_entity(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
+    """
+    Pivot growth rate results so that:
+    - Rows = time dimension (Week, Year, Month, etc.)
+    - Columns = entities (Distributor, Product, etc.) with their growth rates
+    
+    This makes it much easier to compare growth across entities.
+    """
+    if df is None or df.empty:
+        return df
+    
+    compare = spec.get("compare") or {}
+    entity_type = compare.get("entity_type")
+    aggregation = spec.get("aggregation")
+    
+    # Only pivot if:
+    # 1. This is a growth_rate aggregation
+    # 2. We're comparing entities
+    # 3. We have a growth column
+    if aggregation != "growth_rate" or not entity_type:
+        return df
+    
+    growth_col = None
+    if "WoW_Growth_%" in df.columns:
+        growth_col = "WoW_Growth_%"
+        time_col = "Week"
+    elif any("Growth" in col and "%" in col for col in df.columns):
+        growth_col = [c for c in df.columns if "Growth" in c and "%" in c][0]
+        time_col = "Year" if "Year" in df.columns else None
+    
+    if growth_col is None or time_col not in df.columns:
+        return df
+    
+    df = df.copy()
+    
+    # Find the entity column in the dataframe
+    entity_col = None
+    if entity_type == "distributor":
+        entity_col = "Distributor"
+    elif entity_type == "product_sold":
+        entity_col = "Catalogue description (sold as)"
+    elif entity_type == "product_catalogue":
+        entity_col = "Catalogue description"
+    
+    # Fallback: search for it
+    if entity_col not in df.columns:
+        possible_cols = [c for c in df.columns if entity_type.replace("_", " ").lower() in c.lower()]
+        if possible_cols:
+            entity_col = possible_cols[0]
+        else:
+            return df
+    
+    if entity_col not in df.columns:
+        return df
+    
+    # Simplify names for display
+    name_simplifications = {
+        "dsd pharma gmbh": "DSD",
+        "dsd": "DSD",
+        "pi medical diagnostic equipment b.v.": "PI Medical",
+        "pi medical": "PI Medical",
+    }
+    
+    df[entity_col] = (
+        df[entity_col]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .map(lambda x: name_simplifications.get(x, x.title()))
+    )
+    
+    # Pivot: rows = time_col, columns = entity, values = growth_col
+    try:
+        pivot_df = df.pivot_table(
+            index=time_col,
+            columns=entity_col,
+            values=growth_col,
+            aggfunc="first"  # If somehow multiple rows, take first
+        )
+        pivot_df = pivot_df.reset_index()
+        pivot_df.columns.name = None  # Remove the category name from column header
+        
+        # Round growth percentages to 1 decimal
+        for col in pivot_df.columns:
+            if col != time_col:
+                pivot_df[col] = pd.to_numeric(pivot_df[col], errors="coerce").round(1)
+        
+        print(f"[PIVOT] Successfully pivoted growth table to shape: {pivot_df.shape}")
+        return pivot_df
+    except Exception as e:
+        print(f"[PIVOT] Could not pivot growth table: {e}")
+        return df
+
+# ============================================
+# MAIN ENTRYPOINT
+# ============================================
 
 def answer_question_from_df(
     question: str,
