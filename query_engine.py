@@ -3114,9 +3114,9 @@ def answer_question_from_df(
     print("=" * 70)
     print(f"Question: {question}")
 
-    # --- CRITICAL FIX: Define aggregation variable BEFORE spec is interpreted
-    #                   This ensures any helper function that runs early
-    #                   and tries to access 'aggregation' will not crash.
+    # --- CRITICAL FIX: Define aggregation variable immediately.
+    # We initialize it here to prevent 'NameError' in any prematurely
+    # executing logic, and then update it with the LLM's value below.
     aggregation = "sum_mci"
     # ----------------------------------------------------------------
 
@@ -3338,6 +3338,18 @@ def answer_question_from_df(
         parts.append(f"product from catalogue **{filters['product_catalogue']}**")
     if filters.get("production_site"):
         parts.append(f"production site **{filters['production_site']}**")
+    
+    # Handle time window for text description
+    tw = spec.get("time_window") or {}
+    if tw.get("mode") == "last_n_weeks" and tw.get("n_weeks"):
+        parts.append(f"the last **{tw['n_weeks']} weeks**")
+    elif tw.get("mode") == "anchored_last_n_weeks" and tw.get("n_weeks") and tw.get("anchor", {}).get("week"):
+        anchor_year = tw.get("anchor", {}).get("year")
+        anchor_text = f"week **{tw['anchor']['week']}**"
+        if anchor_year:
+            anchor_text += f" of **{anchor_year}**"
+        parts.append(f"the **{tw['n_weeks']} weeks** leading up to {anchor_text}")
+
 
     filter_text = ", ".join(parts) if parts else "all records"
 
@@ -3390,7 +3402,7 @@ def answer_question_from_df(
             )
             core_answer = header + (preview_md or "")
 
-    # SUM
+    # SUM / COMPARE
     elif aggregation in ("sum_mci", "compare"):
         if group_df is None:
             core_answer = (
