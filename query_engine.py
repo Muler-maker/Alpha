@@ -352,7 +352,12 @@ ALWAYS:
         spec["group_by"] = gb
         print(f"🔴 Final group_by for growth_rate: {gb}")
         print(f"🔴 Final aggregation: growth_rate")
-            # ===== TOP N DETECTION =====
+        
+        # IMPORTANT: Return early so we don't hit the old "compare" logic below
+        spec["_question_text"] = question
+        return spec
+
+    # ===== TOP N DETECTION =====
     top_n_keywords = [
         "top ", "top10", "top 10", "top5", "top 5", "top3", "top 3",
         "highest", "largest", "biggest", "most ordered", "most volume",
@@ -3294,26 +3299,7 @@ def answer_question_from_df(
     # 8) Build the core textual answer by aggregation type
     core_answer = ""
 
-    # TOP N
-    if aggregation == "top_n":
-        rank_entity = spec.get("_top_n_entity", "entity")
-        n_value = spec.get("_top_n_value", 10)
-        
-        if group_df is None:
-            core_answer = (
-                f"Could not compute top {n_value} {rank_entity}s for {filter_text}."
-            )
-        else:
-            preview_md = group_df.to_markdown(index=False)
-            entity_display = rank_entity.replace("_", " ").title()
-            
-            header = (
-                f"Here are the **top {n_value} {entity_display}s** by order volume "
-                f"for {filter_text}. The total volume across all {entity_display}s is "
-                f"**{numeric_value:,.0f} mCi**.\n\n"
-            )
-            core_answer = header + (preview_md or "")
-
+ 
     # SUM (and basic comparison tables)
     elif aggregation in ("sum_mci", "compare"):
         if group_df is None:
