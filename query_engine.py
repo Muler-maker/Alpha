@@ -2063,7 +2063,7 @@ def _run_aggregation(
     # ------------------------------------------------------------------
     # COMPARE MODE (entity or time comparison)
     # ------------------------------------------------------------------
-     if aggregation == "compare":
+if aggregation == "compare":
         # Normalize compare and entities so they are never None
         compare = spec.get("compare") or {}
         if compare is None:
