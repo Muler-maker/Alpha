@@ -3550,15 +3550,15 @@ def answer_question_from_df(
 # -------------------------
 # Dynamic week window logic
 # -------------------------
-def _apply_time_window(df: pd.DataFrame, filters: Dict[str, Any]) -> pd.DataFrame:
+def _apply_time_window(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     """
-    Applies dynamic week window filters based on the 'time_window' structure.
+    Applies dynamic week window filters based on the 'time_window' structure in spec.
     This handles:
     - last N weeks
     - anchored last N weeks
 
-    Expected structure:
-    filters["time_window"] = {
+    Expected structure in spec:
+    spec["time_window"] = {
         "mode": "last_n_weeks" | "anchored_last_n_weeks",
         "n_weeks": int,
         "anchor": {
@@ -3566,8 +3566,18 @@ def _apply_time_window(df: pd.DataFrame, filters: Dict[str, Any]) -> pd.DataFram
             "week": int | None
         }
     }
+    
+    Args:
+        df: DataFrame to filter
+        spec: The spec dictionary containing time_window configuration
+    
+    Returns:
+        Filtered DataFrame with only rows matching the time window
     """
-    tw = filters.get("time_window") or {}
+    if df is None or df.empty:
+        return df
+    
+    tw = spec.get("time_window") or {}
     mode = tw.get("mode")
     n_weeks = tw.get("n_weeks")
     anchor = tw.get("anchor") or {}
@@ -3581,30 +3591,48 @@ def _apply_time_window(df: pd.DataFrame, filters: Dict[str, Any]) -> pd.DataFram
     # Be defensive: n_weeks and anchor_week might arrive as strings
     try:
         n_weeks = int(n_weeks)
-    except Exception:
+    except (ValueError, TypeError):
         return df  # invalid -> ignore gracefully
 
     df = df.copy()
 
+    # Check that Year and Week columns exist
+    if "Year" not in df.columns or "Week" not in df.columns:
+        return df.iloc[0:0]  # Empty result if no time columns
+
     # Determine the effective year to operate in
+    filters = spec.get("filters") or {}
     effective_year = filters.get("year")
 
     if effective_year is None and anchor_year is not None:
         try:
             effective_year = int(anchor_year)
-        except Exception:
+        except (ValueError, TypeError):
             effective_year = None
 
     if effective_year is None:
         # Fall back to latest year present in the data
-        if "Year" not in df.columns or df["Year"].dropna().empty:
-            return df
-        effective_year = int(df["Year"].max())
+        if df["Year"].dropna().empty:
+            return df.iloc[0:0]
+        try:
+            effective_year = int(df["Year"].max())
+        except (ValueError, TypeError):
+            return df.iloc[0:0]
 
     df_year = df[df["Year"] == effective_year]
 
-    if df_year.empty or "Week" not in df_year.columns:
-        # No data for that year or no week column -> empty result
+    if df_year.empty:
+        # No data for that year -> empty result
+        return df.iloc[0:0]
+
+    # Get available weeks for this year
+    try:
+        available_weeks = df_year["Week"].dropna().unique()
+        if len(available_weeks) == 0:
+            return df.iloc[0:0]
+        min_week = int(df_year["Week"].min())
+        max_week = int(df_year["Week"].max())
+    except (ValueError, TypeError):
         return df.iloc[0:0]
 
     # Determine anchor week (end of the window)
@@ -3613,20 +3641,18 @@ def _apply_time_window(df: pd.DataFrame, filters: Dict[str, Any]) -> pd.DataFram
             return df.iloc[0:0]
         try:
             end_week = int(anchor_week)
-        except Exception:
+        except (ValueError, TypeError):
             return df.iloc[0:0]
     else:
         # last_n_weeks -> use the max week of that year
-        try:
-            end_week = int(df_year["Week"].max())
-        except Exception:
-            return df.iloc[0:0]
+        end_week = max_week
 
     # Compute start week and clamp to minimum week present
     start_week = end_week - n_weeks + 1
-    if start_week < int(df_year["Week"].min()):
-        start_week = int(df_year["Week"].min())
+    if start_week < min_week:
+        start_week = min_week
 
+    # Filter by year and week range
     df_filtered = df_year[
         (df_year["Week"] >= start_week) & (df_year["Week"] <= end_week)
     ]
