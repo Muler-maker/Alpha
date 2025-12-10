@@ -2672,7 +2672,7 @@ def _normalize_product_filters(spec: Dict[str, Any], question: str) -> Dict[str,
         # Very rough markers that indicate a REAL product, not a company name
         isotope_markers = [
             "lu", "lutetium", "177", "tb", "terbium",
-            "psma", "chloride", "n.c.a", "c.a"
+            "psma", "chloride", "n.c.a", "c.a", "nca"  # ← ADDED "nca" HERE
         ]
 
         is_real_product = any(k in pv for k in isotope_markers)
@@ -3117,8 +3117,12 @@ def answer_question_from_df(
     # 1) Build & normalize the spec
     spec = _interpret_question_with_llm(question, history=history)
 
+    # --- FIX: Define aggregation IMMEDIATELY so it is available everywhere ---
+    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
+    # -----------------------------------------------------------------------
+
     print(f"\n[SPEC] After interpretation:")
-    print(f"  aggregation: {spec.get('aggregation')}")
+    print(f"  aggregation: {aggregation}")  # Use the var we just defined
     print(f"  group_by: {spec.get('group_by')}")
     print(f"  filters.customer: {spec.get('filters', {}).get('customer')}")
     print(f"  filters.distributor: {spec.get('filters', {}).get('distributor')}")
@@ -3181,7 +3185,10 @@ def answer_question_from_df(
     # 2) Apply filters & run aggregation
     spec_for_filtering = spec.copy()
 
-    if spec.get("aggregation") == "growth_rate":
+    # Update aggregation var just in case spec changed (e.g. inside heuristics)
+    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
+
+    if aggregation == "growth_rate":
         group_by = spec.get("group_by") or []
         if "year" in group_by:
             filters = spec_for_filtering.get("filters") or {}
@@ -3205,10 +3212,6 @@ def answer_question_from_df(
     else:
         print("  result: None")
     print(f"  numeric value: {numeric_value}")
-
-    # Define aggregation early for safe use throughout
-    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
-    print(f"\n[DEBUG] aggregation set to: {aggregation}")
 
     # ===== PIVOT growth comparisons FIRST (before any other reshaping) =====
     if group_df is not None and aggregation == "growth_rate":
@@ -3348,8 +3351,44 @@ def answer_question_from_df(
     # 8) Build the core textual answer by aggregation type
     core_answer = ""
 
+    # TOP N
+    if aggregation == "top_n":
+        rank_entity = spec.get("_top_n_entity", "entity")
+        n_value = spec.get("_top_n_value", 10)
+
+        if group_df is None:
+            core_answer = (
+                f"Could not compute top {n_value} {rank_entity}s for {filter_text}."
+            )
+        else:
+            # Try to identify entity column cleanly for the text
+            entity_display = str(rank_entity).replace("_", " ").title()
+            
+            preview_md = group_df.to_markdown(index=False)
+            
+            header = (
+                f"Here are the **top {n_value} {entity_display}s** by order volume "
+                f"for {filter_text}. The total volume across all {entity_display}s is "
+                f"**{numeric_value:,.0f} mCi**.\n\n"
+            )
+            core_answer = header + (preview_md or "")
+
+    # PROJECTION VS ACTUAL
+    elif aggregation == "projection_vs_actual":
+        if group_df is None:
+            core_answer = (
+                f"Could not compute projection vs actuals for {filter_text}."
+            )
+        else:
+            preview_md = group_df.to_markdown(index=False)
+            header = (
+                f"Here is the **projection vs actual** comparison for {filter_text}. "
+                f"Total actual volume: **{numeric_value:,.0f} mCi**.\n\n"
+            )
+            core_answer = header + (preview_md or "")
+
     # SUM (and basic comparison tables)
-    if aggregation in ("sum_mci", "compare"):
+    elif aggregation in ("sum_mci", "compare"):
         if group_df is None:
             core_answer = (
                 f"Based on {status_text} for {filter_text}, the total ordered amount is "
@@ -3429,33 +3468,22 @@ def answer_question_from_df(
             cols = list(group_df.columns)
 
             # Week-over-week growth table
-            if "WoW_Growth_%" in cols:
+            if "WoW_Growth_%" in cols or any("Growth" in c for c in cols):
                 preview_md = group_df.to_markdown(index=False)
                 time_window = spec.get("time_window") or {}
                 n_weeks = time_window.get("n_weeks")
 
                 if n_weeks:
                     header = (
-                        f"Here is the **week-over-week growth** for the last {n_weeks} weeks "
+                        f"Here is the **growth** for the last {n_weeks} weeks "
                         f"for {filter_text}.\n\n"
                     )
                 else:
                     header = (
-                        f"Here is the **week-over-week growth** "
+                        f"Here is the **growth breakdown** "
                         f"for {filter_text}.\n\n"
                     )
-
                 core_answer = header + (preview_md or "")
-
-            # Year-over-year growth table
-            elif "YoY_Growth" in cols or any("vs" in str(c) and "Growth" in str(c) for c in cols):
-                preview_md = group_df.to_markdown(index=False)
-                header = (
-                    f"Here is the **year-over-year growth** "
-                    f"for {filter_text}.\n\n"
-                )
-                core_answer = header + (preview_md or "")
-
             else:
                 preview_md = group_df.to_markdown(index=False)
                 header = (
