@@ -2818,28 +2818,40 @@ def _pivot_growth_by_entity(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFr
     This makes it much easier to compare growth across entities.
     """
     if df is None or df.empty:
+        print(f"[PIVOT] Input df is None or empty")
         return df
     
     compare = spec.get("compare") or {}
     entity_type = compare.get("entity_type")
     aggregation = spec.get("aggregation")
     
+    print(f"[PIVOT] Input shape: {df.shape}, columns: {list(df.columns)}")
+    print(f"[PIVOT] entity_type: {entity_type}, aggregation: {aggregation}")
+    
     # Only pivot if:
     # 1. This is a growth_rate aggregation
     # 2. We're comparing entities
     # 3. We have a growth column
     if aggregation != "growth_rate" or not entity_type:
+        print(f"[PIVOT] Skipping - not growth_rate or no entity_type")
         return df
     
     growth_col = None
+    time_col = None
+    
     if "WoW_Growth_%" in df.columns:
         growth_col = "WoW_Growth_%"
         time_col = "Week"
+        print(f"[PIVOT] Detected WoW_Growth_% - using Week as time_col")
     elif any("Growth" in col and "%" in col for col in df.columns):
         growth_col = [c for c in df.columns if "Growth" in c and "%" in c][0]
         time_col = "Year" if "Year" in df.columns else None
+        print(f"[PIVOT] Detected {growth_col} - using {time_col} as time_col")
     
     if growth_col is None or time_col not in df.columns:
+        print(f"[PIVOT] Skipping - no growth_col or time_col not in df")
+        print(f"[PIVOT]   growth_col={growth_col}, time_col={time_col}")
+        print(f"[PIVOT]   df.columns={list(df.columns)}")
         return df
     
     df = df.copy()
@@ -2853,16 +2865,28 @@ def _pivot_growth_by_entity(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFr
     elif entity_type == "product_catalogue":
         entity_col = "Catalogue description"
     
+    print(f"[PIVOT] Looking for entity_col: {entity_col}")
+    
     # Fallback: search for it
     if entity_col not in df.columns:
+        print(f"[PIVOT] entity_col '{entity_col}' not in df.columns, searching...")
         possible_cols = [c for c in df.columns if entity_type.replace("_", " ").lower() in c.lower()]
         if possible_cols:
             entity_col = possible_cols[0]
+            print(f"[PIVOT] Found possible column: {entity_col}")
         else:
+            print(f"[PIVOT] No possible columns found, returning unpivoted")
             return df
     
     if entity_col not in df.columns:
+        print(f"[PIVOT] entity_col '{entity_col}' still not in df, giving up")
+        print(f"[PIVOT] Available columns: {list(df.columns)}")
         return df
+    
+    print(f"[PIVOT] Using entity_col: {entity_col}")
+    print(f"[PIVOT] Using growth_col: {growth_col}")
+    print(f"[PIVOT] Using time_col: {time_col}")
+    print(f"[PIVOT] Unique entities before pivot: {df[entity_col].unique()}")
     
     # Simplify names for display
     name_simplifications = {
@@ -2880,26 +2904,35 @@ def _pivot_growth_by_entity(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFr
         .map(lambda x: name_simplifications.get(x, x.title()))
     )
     
+    print(f"[PIVOT] After simplification: {df[entity_col].unique()}")
+    
     # Pivot: rows = time_col, columns = entity, values = growth_col
     try:
+        print(f"[PIVOT] Calling pivot_table with index={time_col}, columns={entity_col}, values={growth_col}")
         pivot_df = df.pivot_table(
             index=time_col,
             columns=entity_col,
             values=growth_col,
             aggfunc="first"  # If somehow multiple rows, take first
         )
+        print(f"[PIVOT] Pivot successful! Shape before reset: {pivot_df.shape}")
+        
         pivot_df = pivot_df.reset_index()
         pivot_df.columns.name = None  # Remove the category name from column header
+        
+        print(f"[PIVOT] After reset_index: shape={pivot_df.shape}, columns={list(pivot_df.columns)}")
         
         # Round growth percentages to 1 decimal
         for col in pivot_df.columns:
             if col != time_col:
                 pivot_df[col] = pd.to_numeric(pivot_df[col], errors="coerce").round(1)
         
-        print(f"[PIVOT] Successfully pivoted growth table to shape: {pivot_df.shape}")
+        print(f"[PIVOT] ✅ Successfully pivoted! Final shape: {pivot_df.shape}")
         return pivot_df
     except Exception as e:
-        print(f"[PIVOT] Could not pivot growth table: {e}")
+        print(f"[PIVOT] ❌ Could not pivot growth table: {e}")
+        import traceback
+        traceback.print_exc()
         return df
 
 # ============================================
