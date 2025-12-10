@@ -2376,7 +2376,6 @@ def _run_aggregation(
 
         share = numerator / denominator
         return None, float(share)
-
 def _build_chart_block(
     group_df: pd.DataFrame,
     spec: Dict[str, Any],
