@@ -3115,8 +3115,8 @@ def answer_question_from_df(
     print(f"Question: {question}")
 
     # --- CRITICAL FIX: Define aggregation variable BEFORE spec is interpreted
-    #                   to resolve "NameError: 'aggregation' is not defined"
-    #                   in any dependent logic that may run early.
+    #                   This ensures any helper function that runs early
+    #                   and tries to access 'aggregation' will not crash.
     aggregation = "sum_mci"
     # ----------------------------------------------------------------
 
