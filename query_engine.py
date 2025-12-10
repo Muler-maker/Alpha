@@ -2063,13 +2063,13 @@ def _run_aggregation(
     # ------------------------------------------------------------------
     # COMPARE MODE (entity or time comparison)
     # ------------------------------------------------------------------
-    if aggregation == "compare":
+     if aggregation == "compare":
         # Normalize compare and entities so they are never None
         compare = spec.get("compare") or {}
         if compare is None:
             compare = {}
 
-        entities = compare.get("entities") or []   # <- always a list
+        entities = compare.get("entities") or []   # <- always a list (possibly empty)
         compare["entities"] = entities
         spec["compare"] = compare
 
@@ -3118,11 +3118,6 @@ def answer_question_from_df(
 
     # 1) Build & normalize the spec
     spec = _interpret_question_with_llm(question, history=history) or {}
-    # Ensure compare block is always a dict
-    if spec is None:
-        spec = {}
-    if spec.get("compare") is None:
-        spec["compare"] = {}
 
     # Defensive normalization so we never get None where dicts are expected
     spec.setdefault("filters", {})
