@@ -3036,6 +3036,8 @@ def answer_question_from_df(
     print(f"\n[FILTER] After filtering:")
     print(f"  rows returned: {len(df_filtered) if df_filtered is not None else 0}")
     
+# REPLACE the section right after _run_aggregation() with this diagnostic version:
+
     group_df, numeric_value = _run_aggregation(df_filtered, spec, consolidated_df)
 
     print(f"\n[AGGREGATION] After aggregation:")
@@ -3045,6 +3047,33 @@ def answer_question_from_df(
     else:
         print(f"  result: None")
     print(f"  numeric value: {numeric_value}")
+    
+    # ===== DIAGNOSTIC: Check what's happening =====
+    print(f"\n[DIAGNOSTIC] Before pivot check:")
+    print(f"  group_df is not None: {group_df is not None}")
+    print(f"  spec.get('aggregation'): {spec.get('aggregation')}")
+    print(f"  aggregation == 'growth_rate': {spec.get('aggregation') == 'growth_rate'}")
+    print(f"  Full spec.get('compare'): {spec.get('compare')}")
+    
+    # ===== PIVOT attempt =====
+    if group_df is not None:
+        print(f"\n[PIVOT_START] group_df is not None, attempting pivot...")
+        if spec.get("aggregation") == "growth_rate":
+            print(f"[PIVOT_GO] Aggregation is growth_rate, calling _pivot_growth_by_entity()...")
+            original_shape = group_df.shape
+            group_df = _pivot_growth_by_entity(group_df, spec)
+            print(f"[PIVOT_RESULT] After pivot: shape changed from {original_shape} to {group_df.shape if group_df is not None else None}")
+        else:
+            print(f"[PIVOT_SKIP] Aggregation is '{spec.get('aggregation')}', not 'growth_rate', skipping pivot")
+    else:
+        print(f"\n[PIVOT_SKIP] group_df is None, skipping pivot")
+    
+    # 3) Pivot-style reshaping for time dimensions (but skip if already pivoted)
+    if spec.get("aggregation") != "growth_rate":
+        print(f"\n[RESHAPE] Calling _reshape_for_display()...")
+        group_df = _reshape_for_display(group_df, spec)
+    else:
+        print(f"\n[RESHAPE_SKIP] Skipping _reshape_for_display() for growth_rate")
     
     # ===== NEW: PIVOT growth comparisons FIRST (before any other reshaping) =====
     if group_df is not None and spec.get("aggregation") == "growth_rate":
