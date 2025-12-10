@@ -2969,7 +2969,6 @@ def _pivot_growth_by_entity(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFr
 # ============================================
 # MAIN ENTRYPOINT
 # ============================================
-
 def answer_question_from_df(
     question: str,
     consolidated_df: pd.DataFrame,
@@ -3077,15 +3076,19 @@ def answer_question_from_df(
         print(f"  result: None")
     print(f"  numeric value: {numeric_value}")
     
+    # Define aggregation early for safe use throughout
+    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
+    print(f"\n[DEBUG] aggregation set to: {aggregation}")
+    
     # ===== PIVOT growth comparisons FIRST (before any other reshaping) =====
-    if group_df is not None and spec.get("aggregation") == "growth_rate":
+    if group_df is not None and aggregation == "growth_rate":
         print(f"\n[PIVOT] Attempting to pivot growth rate table...")
         original_shape = group_df.shape
         group_df = _pivot_growth_by_entity(group_df, spec)
         print(f"[PIVOT] After pivot: shape changed from {original_shape} to {group_df.shape if group_df is not None else None}")
     
     # 3) Pivot-style reshaping for time dimensions (but skip if already pivoted)
-    if spec.get("aggregation") != "growth_rate":  # Skip normal reshape if growth_rate (already pivoted above)
+    if aggregation != "growth_rate":  # Skip normal reshape if growth_rate (already pivoted above)
         group_df = _reshape_for_display(group_df, spec)
 
     # 4) Format numeric columns
@@ -3173,7 +3176,6 @@ def answer_question_from_df(
 
     # 7) Build human-readable filter description
     filters = spec.get("filters", {}) or {}
-    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
     
     parts = []
     if filters.get("customer"):
