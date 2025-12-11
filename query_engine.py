@@ -1749,7 +1749,7 @@ def _run_aggregation(
     full_df: Optional[pd.DataFrame] = None,
 ) -> Tuple[Optional[pd.DataFrame], float]:
     """
-    Run the specified aggregation (sum, average, share_of_total, growth_rate, top_n)
+    Run the specified aggregation (sum, average, share_of_total, growth_rate, top_n, compare)
     on the filtered data.
     """
     if df_filtered is None or not isinstance(df_filtered, pd.DataFrame) or df_filtered.empty:
@@ -1766,359 +1766,497 @@ def _run_aggregation(
     group_by = spec.get("group_by") or []
     group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
 
-    # ------------------------------------------------------------------
-    # TOP N (ranking entities by volume)
-    # ------------------------------------------------------------------
-    if aggregation == "top_n":
-        n_value = spec.get("_top_n_value", 10)
-        rank_entity = spec.get("_top_n_entity")
+    print(f"\n{'='*70}")
+    print(f"_run_aggregation() - {aggregation.upper()}")
+    print(f"{'='*70}")
+    print(f"  Input shape: {base_df.shape}")
+    print(f"  Aggregation: {aggregation}")
+    print(f"  Group by: {group_by}")
+    print(f"  Total col: {total_col}")
 
-        print(f"\n🔴 TOP_N EXECUTION:")
-        print(f"  n_value: {n_value}")
-        print(f"  rank_entity: {rank_entity}")
-        print(f"  group_by: {group_by}")
-        print(f"  group_cols: {group_cols}")
-        print(f"  df_filtered.shape: {base_df.shape}")
-
-        if not rank_entity or not group_cols:
-            print("  ❌ Missing rank_entity or group_cols")
-            return None, float("nan")
-
-        # Make sure the entity column is in group_cols
-        entity_col = mapping.get(rank_entity)
-        print(f"  entity_col from mapping: {entity_col}")
-
-        if not entity_col or entity_col not in base_df.columns:
-            print(f"  ❌ entity_col '{entity_col}' not in base_df.columns")
-            print(f"  Available columns: {list(base_df.columns)[:10]}")
-            return None, float("nan")
-
-        # Group by entity and sum totals
-        grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].sum()
-
-        print(f"  After groupby: shape={grouped_df.shape}")
-
-        # Sort by total_col descending
-        grouped_df = grouped_df.sort_values(total_col, ascending=False)
-
-        # Take top N
-        top_df = grouped_df.head(n_value).reset_index(drop=True)
-
-        # Add rank column
-        top_df.insert(0, "Rank", range(1, len(top_df) + 1))
-
-        # Format the entity column (clean up long names)
-        if entity_col in top_df.columns:
-            name_simplifications = {
-                "dsd pharma gmbh": "DSD Pharma GmbH",
-                "pi medical diagnostic equipment b.v.": "PI Medical",
-            }
-            top_df[entity_col] = (
-                top_df[entity_col]
-                .astype(str)
-                .str.strip()
-                .apply(lambda x: name_simplifications.get(x.lower(), x))
-            )
-
-        # Round mCi values
-        top_df[total_col] = top_df[total_col].round(0).astype(int)
-
-        # Calculate total volume
-        total_volume = float(base_df[total_col].sum())
-
-        print(f"  Top {n_value} result: shape={top_df.shape}")
-        print(f"  Total volume: {total_volume}")
-
-        return top_df, total_volume
-
- # ------------------------------------------------------------------
-    # GROWTH RATE (WoW / YoY) - WITH ENTITY FILTERING
-    # ------------------------------------------------------------------
-    if aggregation == "growth_rate":
-        debug_msg = ""
-        time_window = spec.get("time_window") or {}
-
-        # CRITICAL FIX: Defensive initialization of compare
-        compare = spec.get("compare")
-        if compare is None:
-            compare = {}
-            spec["compare"] = compare
-        
-        # Ensure entities is always a list, never None
-        entities = compare.get("entities")
-        if entities is None:
-            entities = []
-        compare["entities"] = entities
-        
-        entity_type = compare.get("entity_type")
-        
-        debug_msg += f"  time_window.mode: {time_window.get('mode')}\n"
-        debug_msg += f"  compare.entities: {entities}\n"
-        debug_msg += f"  compare.entity_type: {entity_type}\n"
-
-        # --------- STEP 1: Filter by specific entities if comparing ---------
-        if entities and entity_type:  # entities is now guaranteed to be a list
-            entity_col = mapping.get(entity_type)
-            debug_msg += f"  entity_col from mapping: {entity_col}\n"
-
-            if entity_col and entity_col in base_df.columns:
-                # Build OR mask for all entities in the compare list
-                mask = None
-                for ent in entities:
-                    cur = base_df[entity_col].astype(str).str.contains(
-                        str(ent), case=False, na=False, regex=False
-                    )
-                    if mask is None:
-                        mask = cur
-                    else:
-                        mask = mask | cur
-                    debug_msg += f"    Checking entity '{ent}': {cur.sum()} rows\n"
-
-                if mask is not None:
-                    base_df = base_df[mask]
-                    debug_msg += f"  After entity filtering: {len(base_df)} rows remaining\n"
-
-        # --------- STEP 2: Recompute group_cols with entity dimension ---------
-        group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
-        debug_msg += f"  Initial group_cols from spec: {group_cols}\n"
-
-        # Make sure entity_type is in group_cols if we're comparing entities
-        if entities and entity_type:
-            entity_col = mapping.get(entity_type)
-            if entity_col and entity_col not in group_cols:
-                group_cols.insert(0, entity_col)
-                debug_msg += f"  Added entity column to group_cols: {entity_col}\n"
-
-        debug_msg += f"  Final group_cols: {group_cols}\n"
-        debug_msg += f"  total_col: {total_col}\n"
-        debug_msg += f"  base_df.shape: {base_df.shape}\n"
-
-        # --------- STEP 3: Route to appropriate growth calculation ---------
-
-        # Case 1: Dynamic week window → always WoW
-        if time_window.get("mode") in ("last_n_weeks", "anchored_last_n_weeks"):
-            debug_msg += "  → MATCHED Case 1: Dynamic week window (WoW)\n"
-            week_col = mapping.get("week")
-            debug_msg += f"    week_col: {week_col}\n"
-            if week_col and week_col in base_df.columns:
-                group_df, overall_val = _calculate_wow_growth(
-                    base_df, spec, group_cols, week_col, total_col
-                )
-                debug_msg += f"    Result shape: {group_df.shape if group_df is not None else None}\n"
-                print(debug_msg)
-                return group_df, overall_val
-
-        # Case 2: Explicit weekly grouping → WoW
-        week_col = mapping.get("week")
-        if "week" in group_by and week_col and week_col in base_df.columns:
-            debug_msg += "  → MATCHED Case 2: Week in group_by (WoW)\n"
-            debug_msg += f"    week_col: {week_col}\n"
-            debug_msg += f"    group_cols: {group_cols}\n"
-            group_df, overall_val = _calculate_wow_growth(
-                base_df, spec, group_cols, week_col, total_col
-            )
-            debug_msg += f"    Result shape: {group_df.shape if group_df is not None else None}\n"
-            print(debug_msg)
-            return group_df, overall_val
-
-        # Case 3: Year-over-year grouping → YoY
-        year_col = mapping.get("year")
-        if "year" in group_by and year_col and year_col in base_df.columns:
-            debug_msg += "  → MATCHED Case 3: Year in group_by (YoY)\n"
-            debug_msg += f"    year_col: {year_col}\n"
-            group_df, overall_val = _calculate_yoy_growth(
-                base_df, spec, group_cols, year_col, total_col
-            )
-            debug_msg += f"    Result shape: {group_df.shape if group_df is not None else None}\n"
-            print(debug_msg)
-            return group_df, overall_val
-
-        # Case 4: Period A vs B → for now, YoY fallback if year is present
-        period_a = compare.get("period_a")
-        period_b = compare.get("period_b")
-        if period_a and period_b and year_col and year_col in base_df.columns:
-            debug_msg += "  → MATCHED Case 4: Period A vs Period B (fallback YoY)\n"
-            group_df, overall_val = _calculate_yoy_growth(
-                base_df, spec, group_cols, year_col, total_col
-            )
-            debug_msg += f"    Result shape: {group_df.shape if group_df is not None else None}\n"
-            print(debug_msg)
-            return group_df, overall_val
-
-        # Fallback: no growth calculation possible
-        debug_msg += "  → ⚠️ NO CASE MATCHED FOR GROWTH_RATE\n"
-        print(debug_msg)
-        return None, float("nan")
-# APPLY THIS FIX in query_engine.py
-# Replace the entire COMPARE section in _run_aggregation() (around line 1400-1550)
-# APPLY THIS FIX in query_engine.py
-# Replace the entire COMPARE section in _run_aggregation() (around line 1400-1550)
-
-    # ------------------------------------------------------------------
+    # ===========================================================================
     # COMPARE MODE (entity or time comparison)
-    # ------------------------------------------------------------------
+    # ===========================================================================
     if aggregation == "compare":
-        compare = spec.get("compare") or {}
-        if compare is None:
-            compare = {}
-        spec["compare"] = compare
+        return _run_compare_aggregation(base_df, spec, mapping, total_col)
 
-        entities = compare.get("entities")
-        if entities is None:
-            entities = []
-        compare["entities"] = entities
-        spec["compare"] = compare
+    # ===========================================================================
+    # TOP N (ranking entities by volume)
+    # ===========================================================================
+    if aggregation == "top_n":
+        return _run_top_n_aggregation(base_df, spec, mapping, total_col)
 
-        entity_type = compare.get("entity_type")
+    # ===========================================================================
+    # GROWTH RATE (WoW / YoY)
+    # ===========================================================================
+    if aggregation == "growth_rate":
+        return _run_growth_rate_aggregation(base_df, spec, mapping, total_col, group_cols)
 
-        print(f"\n[COMPARE] Starting compare mode")
-        print(f"  entities: {entities}")
-        print(f"  entity_type: {entity_type}")
+    # ===========================================================================
+    # STANDARD AGGREGATIONS (sum, average, share_of_total)
+    # ===========================================================================
+    
+    # For sum_mci: just sum the total_col
+    if aggregation == "sum_mci":
+        overall_value = float(base_df[total_col].sum())
+        
+        if not group_cols:
+            # No grouping: just return the sum
+            print(f"  No grouping → returning scalar: {overall_value:.0f}")
+            return None, overall_value
+        
+        # Group and sum
+        grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].sum()
+        grouped_df = grouped_df.sort_values(total_col, ascending=False)
+        
+        # Format mCi column
+        grouped_df[total_col] = grouped_df[total_col].round(0).astype(int)
+        
+        print(f"  Grouped result shape: {grouped_df.shape}")
+        return grouped_df, overall_value
 
-# REPLACE the DISTRIBUTOR COMPARISON section in _run_aggregation()
-# Find this section (around line 1420-1480) and replace it entirely:
+    # For average_mci
+    if aggregation == "average_mci":
+        overall_value = float(base_df[total_col].mean())
+        
+        if not group_cols:
+            print(f"  No grouping → returning scalar: {overall_value:.0f}")
+            return None, overall_value
+        
+        # Group and average
+        grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].mean()
+        grouped_df = grouped_df.sort_values(total_col, ascending=False)
+        grouped_df[total_col] = grouped_df[total_col].round(0).astype(int)
+        
+        print(f"  Grouped result shape: {grouped_df.shape}")
+        return grouped_df, overall_value
 
+    # For share_of_total
+    if aggregation == "share_of_total":
+        total_overall = float(base_df[total_col].sum())
+        
+        if not group_cols:
+            # Single value: share is 100%
+            overall_value = 1.0
+            print(f"  No grouping → returning scalar: {overall_value*100:.1f}%")
+            return None, overall_value
+        
+        # Group and calculate share
+        grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].sum()
+        grouped_df["Share_%"] = (grouped_df[total_col] / total_overall * 100.0).round(1)
+        grouped_df = grouped_df.sort_values(total_col, ascending=False)
+        
+        grouped_df[total_col] = grouped_df[total_col].round(0).astype(int)
+        
+        # Store denominator for display
+        share_debug = {"numerator": float(grouped_df[total_col].sum()), "denominator": total_overall}
+        spec["_share_debug"] = share_debug
+        
+        print(f"  Grouped result shape: {grouped_df.shape}")
+        return grouped_df, (grouped_df[total_col].sum() / total_overall)
+
+    # Fallback: unknown aggregation
+    print(f"  ⚠️ Unknown aggregation type: {aggregation}")
+    overall_value = float(base_df[total_col].sum())
+    return None, overall_value
+
+
+# ===========================================================================
+# HELPER: COMPARE AGGREGATION
+# ===========================================================================
+def _run_compare_aggregation(
+    base_df: pd.DataFrame,
+    spec: Dict[str, Any],
+    mapping: Dict[str, Optional[str]],
+    total_col: str,
+) -> Tuple[Optional[pd.DataFrame], float]:
+    """
+    Execute COMPARE aggregation (side-by-side entity comparison).
+    Handles: distributors, products, customers, etc.
+    """
+    compare = spec.get("compare") or {}
+    if compare is None:
+        compare = {}
+    spec["compare"] = compare
+
+    entities = compare.get("entities")
+    if entities is None:
+        entities = []
+    compare["entities"] = entities
+    spec["compare"] = compare
+
+    entity_type = compare.get("entity_type")
+
+    print(f"\n[COMPARE] Starting compare mode")
+    print(f"  entities: {entities}")
+    print(f"  entity_type: {entity_type}")
+
+    # =========================================================================
     # DISTRIBUTOR COMPARISON
+    # =========================================================================
     if entities and entity_type == "distributor":
         entity_col = mapping.get("distributor")
-        print(f"\n[COMPARE] Distributor comparison mode")
+        print(f"\n[COMPARE-DIST] Distributor comparison")
         print(f"  entity_col: {entity_col}")
-        print(f"  entities to find: {entities}")
-        
-        if not entity_col or entity_col not in df_filtered.columns:
-            print(f"  [COMPARE] ERROR: entity_col '{entity_col}' not in df_filtered.columns")
-            print(f"  Available columns: {list(df_filtered.columns)[:10]}")
+        print(f"  base_df.shape: {base_df.shape}")
+
+        if not entity_col or entity_col not in base_df.columns:
+            print(f"  ❌ ERROR: entity_col '{entity_col}' not in base_df.columns")
+            print(f"  Available columns: {list(base_df.columns)[:15]}")
             return None, float("nan")
 
-        # Build comparison data - use case-insensitive substring matching
+        # Build comparison data for EACH entity
         comparison_data = []
-        
+
         for ent in entities:
             ent_lower = str(ent).lower().strip()
-            print(f"\n  Looking for entity: '{ent}' (lowercase: '{ent_lower}')")
-            
+            print(f"\n  Searching for: '{ent}' (normalized: '{ent_lower}')")
+
             # Case-insensitive substring match
-            mask = df_filtered[entity_col].astype(str).str.lower().str.contains(
+            mask = base_df[entity_col].astype(str).str.lower().str.contains(
                 ent_lower, case=False, na=False, regex=False
             )
-            sub = df_filtered[mask]
-            
-            print(f"    Found {len(sub)} rows matching '{ent_lower}'")
-            
+            sub = base_df[mask]
+
+            print(f"    Found {len(sub)} matching rows")
+
             if len(sub) > 0:
                 total_mci = float(sub[total_col].sum())
                 count = len(sub)
                 avg_mci = total_mci / count if count > 0 else 0
-                
+
                 comparison_data.append({
                     "Distributor": ent,
                     "Total_mCi": int(round(total_mci)),
                     "Count": count,
                     "Average_mCi": int(round(avg_mci))
                 })
-                print(f"    Added to comparison: {int(round(total_mci))} mCi")
+                print(f"    ✅ Added: {int(round(total_mci))} mCi, {count} orders")
             else:
-                print(f"    NO DATA FOUND - checking what's in the column:")
-                sample = df_filtered[entity_col].dropna().unique()[:5]
-                print(f"    Sample values: {sample}")
-        
+                # Add zero row for missing entity
+                comparison_data.append({
+                    "Distributor": ent,
+                    "Total_mCi": 0,
+                    "Count": 0,
+                    "Average_mCi": 0
+                })
+                print(f"    ⚠️  No data - added zero row")
+
         if not comparison_data:
-            print(f"  [COMPARE] ERROR: No data found for any entity!")
-            print(f"  All unique values in '{entity_col}':")
-            all_vals = df_filtered[entity_col].dropna().unique()
-            for val in all_vals[:20]:
-                print(f"    - {val}")
+            print(f"  ❌ No comparison data generated!")
             return None, float("nan")
-        
-        # Convert to DataFrame
+
+        # Build result DataFrame
         comparison_df = pd.DataFrame(comparison_data)
         total_mci = float(comparison_df["Total_mCi"].sum())
-        
-        print(f"\n  [COMPARE] Success! Returning table with {len(comparison_df)} rows")
-        print(f"  Total across all entities: {total_mci} mCi")
+
+        print(f"\n[COMPARE-DIST] ✅ Complete!")
+        print(f"  Result shape: {comparison_df.shape}")
+        print(f"  Total mCi: {total_mci:.0f}")
+
         return comparison_df, total_mci
 
-        # PRODUCT COMPARISON (similar logic)
-        if entities and entity_type in ("product_sold", "product_catalogue"):
-            prod_col = (
-                mapping.get("product_sold")
-                if entity_type == "product_sold"
-                else mapping.get("product_catalogue")
+    # =========================================================================
+    # PRODUCT COMPARISON
+    # =========================================================================
+    if entities and entity_type in ("product_sold", "product_catalogue"):
+        prod_col = (
+            mapping.get("product_sold")
+            if entity_type == "product_sold"
+            else mapping.get("product_catalogue")
+        )
+
+        print(f"\n[COMPARE-PROD] Product comparison")
+        print(f"  entity_type: {entity_type}")
+        print(f"  prod_col: {prod_col}")
+
+        if not prod_col or prod_col not in base_df.columns:
+            print(f"  ❌ ERROR: prod_col '{prod_col}' not in base_df.columns")
+            return None, float("nan")
+
+        def _product_subset(df: pd.DataFrame, label: str) -> pd.DataFrame:
+            """Filter df to rows matching product label (NCA/CA/Terbium/generic)."""
+            label_lower = str(label).lower().strip()
+            series = df[prod_col].astype(str).str.lower()
+
+            nca_like = (
+                series.str.contains("n.c.a", regex=False, na=False)
+                | series.str.contains(" nca", regex=False, na=False)
+                | series.str.contains("non carrier", regex=False, na=False)
+                | series.str.contains("non-carrier", regex=False, na=False)
             )
-            if not prod_col or prod_col not in df_filtered.columns:
-                return None, float("nan")
 
-            def _product_subset(df: pd.DataFrame, label: str) -> pd.DataFrame:
-                label = str(label).lower()
-                series = df[prod_col].astype(str).str.lower()
+            ca_like_raw = (
+                series.str.contains(" c.a", regex=False, na=False)
+                | series.str.contains("(c.a", regex=False, na=False)
+                | series.str.contains(" c.a.", regex=False, na=False)
+                | series.str.contains(" ca ", regex=False, na=False)
+                | series.str.contains(" carrier added", regex=False, na=False)
+            )
 
-                nca_like = (
-                    series.str.contains("n.c.a", regex=False)
-                    | series.str.contains(" nca", regex=False)
-                    | series.str.contains("non carrier", regex=False)
-                    | series.str.contains("non-carrier", regex=False)
-                )
+            terb_like = (
+                series.str.contains("terb", regex=False, na=False)
+                | series.str.contains("tb-161", regex=False, na=False)
+                | series.str.contains("tb161", regex=False, na=False)
+                | series.str.contains("161tb", regex=False, na=False)
+            )
 
-                ca_like_raw = (
-                    series.str.contains(" c.a", regex=False)
-                    | series.str.contains("(c.a", regex=False)
-                    | series.str.contains(" c.a.", regex=False)
-                    | series.str.contains(" ca ", regex=False)
-                    | series.str.contains(" carrier added", regex=False)
-                )
+            if label_lower == "nca":
+                return df[nca_like & ~terb_like]
 
-                terb_like = (
-                    series.str.contains("terb", regex=False)
-                    | series.str.contains("tb-161", regex=False)
-                    | series.str.contains("tb161", regex=False)
-                    | series.str.contains("161tb", regex=False)
-                )
+            if label_lower == "ca":
+                return df[ca_like_raw & ~nca_like & ~terb_like]
 
-                if label == "nca":
-                    mask = nca_like & ~terb_like
-                    return df[mask]
+            if label_lower in ("terbium", "tb-161", "tb161", "161tb"):
+                return df[terb_like]
 
-                if label == "ca":
-                    mask = ca_like_raw & ~nca_like & ~terb_like
-                    return df[mask]
+            # Generic substring match
+            return df[series.str.contains(label_lower, na=False, regex=False)]
 
-                return df[series.str.contains(label, na=False)]
+        # Build comparison
+        comparison_data = []
 
-            # Get data for each product
-            comparison_data = []
-            for ent in entities:
-                sub = _product_subset(df_filtered, ent)
-                if sub.empty:
-                    continue
-                
+        for ent in entities:
+            sub = _product_subset(base_df, ent)
+
+            if sub.empty:
+                comparison_data.append({
+                    "Product": ent.upper(),
+                    "Total_mCi": 0,
+                    "Count": 0,
+                    "Average_mCi": 0
+                })
+                continue
+
+            total_mci = float(sub[total_col].sum())
+            count = len(sub)
+            avg_mci = total_mci / count if count > 0 else 0
+
+            comparison_data.append({
+                "Product": ent.upper(),
+                "Total_mCi": int(round(total_mci)),
+                "Count": count,
+                "Average_mCi": int(round(avg_mci))
+            })
+
+        if comparison_data:
+            comparison_df = pd.DataFrame(comparison_data)
+            total_mci = float(comparison_df["Total_mCi"].sum())
+            print(f"[COMPARE-PROD] ✅ Complete! Total: {total_mci:.0f}")
+            return comparison_df, total_mci
+
+        return None, float("nan")
+
+    # =========================================================================
+    # CUSTOMER COMPARISON (similar to distributor)
+    # =========================================================================
+    if entities and entity_type == "customer":
+        entity_col = mapping.get("customer")
+
+        print(f"\n[COMPARE-CUST] Customer comparison")
+        print(f"  entity_col: {entity_col}")
+
+        if not entity_col or entity_col not in base_df.columns:
+            print(f"  ❌ ERROR: entity_col '{entity_col}' not in base_df.columns")
+            return None, float("nan")
+
+        comparison_data = []
+
+        for ent in entities:
+            ent_lower = str(ent).lower().strip()
+
+            mask = base_df[entity_col].astype(str).str.lower().str.contains(
+                ent_lower, case=False, na=False, regex=False
+            )
+            sub = base_df[mask]
+
+            if len(sub) > 0:
                 total_mci = float(sub[total_col].sum())
                 count = len(sub)
                 avg_mci = total_mci / count if count > 0 else 0
-                
+
                 comparison_data.append({
-                    "Product": ent.upper(),
+                    "Customer": ent,
                     "Total_mCi": int(round(total_mci)),
                     "Count": count,
                     "Average_mCi": int(round(avg_mci))
                 })
-
-            if comparison_data:
-                comparison_df = pd.DataFrame(comparison_data)
-                total_mci = float(comparison_df["Total_mCi"].sum())
-                return comparison_df, total_mci
             else:
-                return None, float("nan")
+                comparison_data.append({
+                    "Customer": ent,
+                    "Total_mCi": 0,
+                    "Count": 0,
+                    "Average_mCi": 0
+                })
 
-        # Fallback: simple grouping
-        print(f"  [COMPARE] No entity type matched, falling back to simple grouping")
-        if group_cols:
-            grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
-            grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
-            total_mci = float(df_filtered[total_col].sum())
-            return grouped_df, total_mci
+        if comparison_data:
+            comparison_df = pd.DataFrame(comparison_data)
+            total_mci = float(comparison_df["Total_mCi"].sum())
+            print(f"[COMPARE-CUST] ✅ Complete! Total: {total_mci:.0f}")
+            return comparison_df, total_mci
 
-        total_mci = float(df_filtered[total_col].sum()) if df_filtered is not None and len(df_filtered) > 0 else 0
+        return None, float("nan")
+
+    # =========================================================================
+    # FALLBACK: Simple grouping if no entity type matched
+    # =========================================================================
+    print(f"[COMPARE] No specific entity type matched, falling back to grouping")
+
+    if not group_cols:
+        total_mci = float(base_df[total_col].sum())
         return None, total_mci
+
+    grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].sum()
+    grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
+    total_mci = float(grouped_df[total_col].sum())
+
+    print(f"[COMPARE] Fallback grouping: shape={grouped_df.shape}, total={total_mci:.0f}")
+    return grouped_df, total_mci
+
+
+# ===========================================================================
+# HELPER: TOP N AGGREGATION
+# ===========================================================================
+def _run_top_n_aggregation(
+    base_df: pd.DataFrame,
+    spec: Dict[str, Any],
+    mapping: Dict[str, Optional[str]],
+    total_col: str,
+) -> Tuple[Optional[pd.DataFrame], float]:
+    """
+    Execute TOP N aggregation (rank entities by volume).
+    """
+    n_value = spec.get("_top_n_value", 10)
+    rank_entity = spec.get("_top_n_entity")
+    group_by = spec.get("group_by") or []
+
+    print(f"\n[TOP_N]")
+    print(f"  n_value: {n_value}")
+    print(f"  rank_entity: {rank_entity}")
+    print(f"  group_by: {group_by}")
+
+    if not rank_entity:
+        rank_entity = group_by[0] if group_by else None
+
+    if not rank_entity:
+        print(f"  ❌ No entity to rank on")
+        return None, float("nan")
+
+    entity_col = mapping.get(rank_entity)
+
+    if not entity_col or entity_col not in base_df.columns:
+        print(f"  ❌ entity_col '{entity_col}' not in base_df.columns")
+        return None, float("nan")
+
+    # Group by entity and sum totals
+    group_cols = [entity_col]
+    grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].sum()
+
+    # Sort by total descending and take top N
+    grouped_df = grouped_df.sort_values(total_col, ascending=False)
+    top_df = grouped_df.head(n_value).reset_index(drop=True)
+
+    # Add rank column
+    top_df.insert(0, "Rank", range(1, len(top_df) + 1))
+
+    # Format mCi column
+    top_df[total_col] = top_df[total_col].round(0).astype(int)
+
+    total_volume = float(base_df[total_col].sum())
+
+    print(f"  ✅ Top {n_value} result: shape={top_df.shape}, total={total_volume:.0f}")
+    return top_df, total_volume
+
+
+# ===========================================================================
+# HELPER: GROWTH RATE AGGREGATION (WoW / YoY)
+# ===========================================================================
+def _run_growth_rate_aggregation(
+    base_df: pd.DataFrame,
+    spec: Dict[str, Any],
+    mapping: Dict[str, Optional[str]],
+    total_col: str,
+    group_cols: List[str],
+) -> Tuple[Optional[pd.DataFrame], float]:
+    """
+    Execute GROWTH RATE aggregation.
+    Routes to WoW or YoY depending on group_by and time_window.
+    """
+    group_by = spec.get("group_by") or []
+    time_window = spec.get("time_window") or {}
+    compare = spec.get("compare") or {}
+
+    print(f"\n[GROWTH_RATE]")
+    print(f"  time_window.mode: {time_window.get('mode')}")
+    print(f"  compare.entities: {compare.get('entities')}")
+    print(f"  compare.entity_type: {compare.get('entity_type')}")
+    print(f"  group_by: {group_by}")
+
+    entities = compare.get("entities")
+    if entities is None:
+        entities = []
+    entity_type = compare.get("entity_type")
+
+    # =========================================================================
+    # STEP 1: Filter by specific entities if comparing
+    # =========================================================================
+    if entities and entity_type:
+        entity_col = mapping.get(entity_type)
+        print(f"  Filtering by entities: {entities}")
+
+        if entity_col and entity_col in base_df.columns:
+            mask = None
+            for ent in entities:
+                cur = base_df[entity_col].astype(str).str.contains(
+                    str(ent), case=False, na=False, regex=False
+                )
+                if mask is None:
+                    mask = cur
+                else:
+                    mask = mask | cur
+
+            if mask is not None:
+                base_df = base_df[mask]
+                print(f"  After entity filtering: {len(base_df)} rows")
+
+    # =========================================================================
+    # STEP 2: Determine growth type (WoW vs YoY)
+    # =========================================================================
+
+    # Case 1: Dynamic week window → WoW
+    if time_window.get("mode") in ("last_n_weeks", "anchored_last_n_weeks"):
+        week_col = mapping.get("week")
+        if week_col and week_col in base_df.columns:
+            print(f"  → Case 1: Dynamic week window (WoW)")
+            group_df, overall_val = _calculate_wow_growth(
+                base_df, spec, group_cols, week_col, total_col
+            )
+            return group_df, overall_val
+
+    # Case 2: Explicit weekly grouping → WoW
+    week_col = mapping.get("week")
+    if "week" in group_by and week_col and week_col in base_df.columns:
+        print(f"  → Case 2: Week in group_by (WoW)")
+        group_df, overall_val = _calculate_wow_growth(
+            base_df, spec, group_cols, week_col, total_col
+        )
+        # Pivot by entity if comparing
+        if entities and entity_type:
+            group_df = _pivot_growth_by_entity(group_df, spec)
+        return group_df, overall_val
+
+    # Case 3: Year-over-year grouping → YoY
+    year_col = mapping.get("year")
+    if "year" in group_by and year_col and year_col in base_df.columns:
+        print(f"  → Case 3: Year in group_by (YoY)")
+        group_df, overall_val = _calculate_yoy_growth(
+            base_df, spec, group_cols, year_col, total_col
+        )
+        return group_df, overall_val
+
+    # Fallback: cannot compute growth
+    print(f"  ⚠️ No growth calculation possible")
+    return None, float("nan")
 def _build_chart_block(
     group_df: pd.DataFrame,
     spec: Dict[str, Any],
