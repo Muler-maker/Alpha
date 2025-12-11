@@ -1851,13 +1851,19 @@ def _run_aggregation(
         debug_msg += "  → ⚠️ NO CASE MATCHED FOR GROWTH_RATE\n"
         print(debug_msg)
         return None, float("nan")
-# ------------------------------------------------------------------
+# APPLY THIS FIX in query_engine.py
+# Replace the entire COMPARE section in _run_aggregation() (around line 1400-1550)
+# APPLY THIS FIX in query_engine.py
+# Replace the entire COMPARE section in _run_aggregation() (around line 1400-1550)
+
+    # ------------------------------------------------------------------
     # COMPARE MODE (entity or time comparison)
     # ------------------------------------------------------------------
     if aggregation == "compare":
         compare = spec.get("compare") or {}
         if compare is None:
             compare = {}
+        spec["compare"] = compare
 
         entities = compare.get("entities")
         if entities is None:
@@ -1867,10 +1873,17 @@ def _run_aggregation(
 
         entity_type = compare.get("entity_type")
 
+        print(f"\n[COMPARE] Starting compare mode")
+        print(f"  entities: {entities}")
+        print(f"  entity_type: {entity_type}")
+
         # DISTRIBUTOR COMPARISON
         if entities and entity_type == "distributor":
             entity_col = mapping.get("distributor")
+            print(f"  entity_col: {entity_col}")
+            
             if not entity_col or entity_col not in df_filtered.columns:
+                print(f"  [COMPARE] ERROR: entity_col not in df_filtered.columns")
                 return None, float("nan")
 
             def _match_entity(cell, target):
@@ -1882,77 +1895,45 @@ def _run_aggregation(
             rows_by_entity = {}
             for ent in entities:
                 sub = df_filtered[df_filtered[entity_col].apply(lambda x: _match_entity(x, ent))]
+                print(f"  Entity '{ent}': {len(sub)} rows")
                 if not sub.empty:
                     rows_by_entity[ent] = sub
 
             if not rows_by_entity:
+                print(f"  [COMPARE] No data found for any entity")
                 return None, float("nan")
 
-            # Build comparison table - with group_by support
+            # Build comparison table
             comparison_data = []
             
             for ent in entities:
                 if ent not in rows_by_entity:
+                    print(f"  [COMPARE] Skipping '{ent}' (no data)")
                     continue
                 
                 sub = rows_by_entity[ent]
+                total_mci = float(sub[total_col].sum())
+                count = len(sub)
+                avg_mci = total_mci / count if count > 0 else 0
                 
-                # If group_by is specified (e.g., by week), create multiple rows
-                if group_by and group_by != ["distributor"]:
-                    # Get the columns to group by
-                    group_cols_for_entity = [mapping.get(field) for field in group_by if mapping.get(field) and field != "distributor"]
-                    
-                    if group_cols_for_entity:
-                        # Group by the time/entity dimensions
-                        grouped = sub.groupby(group_cols_for_entity, as_index=False)[total_col].sum()
-                        
-                        for idx, grp_row in grouped.iterrows():
-                            row = {"Distributor": ent}
-                            
-                            # Add the grouping dimensions
-                            for col in group_cols_for_entity:
-                                if col:
-                                    row[col] = grp_row[col]
-                            
-                            # Add metrics
-                            total_mci = float(grp_row[total_col])
-                            row["Total_mCi"] = int(round(total_mci))
-                            row["Count"] = len(sub[sub[group_cols_for_entity[0]] == grp_row[group_cols_for_entity[0]]])
-                            row["Average_mCi"] = int(round(total_mci / row["Count"])) if row["Count"] > 0 else 0
-                            
-                            comparison_data.append(row)
-                    else:
-                        # No valid group columns, fall back to totals
-                        total_mci = float(sub[total_col].sum())
-                        count = len(sub)
-                        avg_mci = total_mci / count if count > 0 else 0
-                        
-                        comparison_data.append({
-                            "Distributor": ent,
-                            "Total_mCi": int(round(total_mci)),
-                            "Count": count,
-                            "Average_mCi": int(round(avg_mci))
-                        })
-                else:
-                    # No grouping - just totals
-                    total_mci = float(sub[total_col].sum())
-                    count = len(sub)
-                    avg_mci = total_mci / count if count > 0 else 0
-                    
-                    comparison_data.append({
-                        "Distributor": ent,
-                        "Total_mCi": int(round(total_mci)),
-                        "Count": count,
-                        "Average_mCi": int(round(avg_mci))
-                    })
+                comparison_data.append({
+                    "Distributor": ent,
+                    "Total_mCi": int(round(total_mci)),
+                    "Count": count,
+                    "Average_mCi": int(round(avg_mci))
+                })
+                print(f"  [COMPARE] {ent}: {int(round(total_mci))} mCi, {count} orders")
             
             # Convert to DataFrame
-            comparison_df = pd.DataFrame(comparison_data)
-            
-            # Calculate total across all entities
-            total_mci = float(comparison_df["Total_mCi"].sum())
-            
-            return comparison_df, total_mci
+            if comparison_data:
+                comparison_df = pd.DataFrame(comparison_data)
+                total_mci = float(comparison_df["Total_mCi"].sum())
+                
+                print(f"  [COMPARE] Result: shape={comparison_df.shape}, total={total_mci}")
+                return comparison_df, total_mci
+            else:
+                print(f"  [COMPARE] No comparison data built")
+                return None, float("nan")
 
         # PRODUCT COMPARISON (similar logic)
         if entities and entity_type in ("product_sold", "product_catalogue"):
@@ -1978,6 +1959,7 @@ def _run_aggregation(
                 ca_like_raw = (
                     series.str.contains(" c.a", regex=False)
                     | series.str.contains("(c.a", regex=False)
+                    | series.str.contains(" c.a.", regex=False)
                     | series.str.contains(" ca ", regex=False)
                     | series.str.contains(" carrier added", regex=False)
                 )
@@ -2017,23 +1999,23 @@ def _run_aggregation(
                     "Average_mCi": int(round(avg_mci))
                 })
 
-            if not comparison_data:
+            if comparison_data:
+                comparison_df = pd.DataFrame(comparison_data)
+                total_mci = float(comparison_df["Total_mCi"].sum())
+                return comparison_df, total_mci
+            else:
                 return None, float("nan")
 
-            comparison_df = pd.DataFrame(comparison_data)
-            total_mci = float(comparison_df["Total_mCi"].sum())
-            return comparison_df, total_mci
-
         # Fallback: simple grouping
+        print(f"  [COMPARE] No entity type matched, falling back to simple grouping")
         if group_cols:
             grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
             grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
             total_mci = float(df_filtered[total_col].sum())
             return grouped_df, total_mci
 
-        total_mci = float(df_filtered[total_col].sum())
+        total_mci = float(df_filtered[total_col].sum()) if df_filtered is not None and len(df_filtered) > 0 else 0
         return None, total_mci
-
 def _build_chart_block(
     group_df: pd.DataFrame,
     spec: Dict[str, Any],
