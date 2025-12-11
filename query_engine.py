@@ -3196,7 +3196,12 @@ def answer_question_from_df(
 # ------------------------------------------------------------------
     # 6) Build the core textual answer by aggregation type
     # ------------------------------------------------------------------
-core_answer = ""
+row_count = len(df_filtered) if df_filtered is not None else 0
+
+    # ------------------------------------------------------------------
+    # 6) Build the core textual answer by aggregation type
+    # ------------------------------------------------------------------
+    core_answer = ""
 
     # COMPARE - distributor/product comparison
     if aggregation == "compare":
