@@ -3196,214 +3196,214 @@ def answer_question_from_df(
 # ------------------------------------------------------------------
     # 6) Build the core textual answer by aggregation type
     # ------------------------------------------------------------------
-    core_answer = ""
+core_answer = ""
 
-        # COMPARE - distributor/product comparison
-        if aggregation == "compare":
-            if group_df is None:
-                core_answer = (
-                    f"Based on {status_text} for {filter_text}, "
-                    f"the total ordered amount is **{numeric_value:,.0f} mCi**."
-                )
+    # COMPARE - distributor/product comparison
+    if aggregation == "compare":
+        if group_df is None:
+            core_answer = (
+                f"Based on {status_text} for {filter_text}, "
+                f"the total ordered amount is **{numeric_value:,.0f} mCi**."
+            )
+        else:
+            preview_md = group_df.to_markdown(index=False)
+            
+            # Build a better header that shows what we're comparing
+            compare = spec.get("compare") or {}
+            entity_type = compare.get("entity_type", "entities")
+            entities = compare.get("entities", [])
+            
+            # Humanize the entity type
+            if entity_type == "distributor":
+                entity_label = "distributors"
+            elif entity_type == "product_sold":
+                entity_label = "products (sold as)"
+            elif entity_type == "product_catalogue":
+                entity_label = "products (catalogue)"
             else:
-                preview_md = group_df.to_markdown(index=False)
-                
-                # Build a better header that shows what we're comparing
-                compare = spec.get("compare") or {}
-                entity_type = compare.get("entity_type", "entities")
-                entities = compare.get("entities", [])
-                
-                # Humanize the entity type
-                if entity_type == "distributor":
-                    entity_label = "distributors"
-                elif entity_type == "product_sold":
-                    entity_label = "products (sold as)"
-                elif entity_type == "product_catalogue":
-                    entity_label = "products (catalogue)"
-                else:
-                    entity_label = entity_type
-                
-                # Build the header
-                if entities and len(entities) > 0:
-                    entity_list = " vs ".join([f"**{e}**" for e in entities])
-                    header = (
-                        f"Here is a **side-by-side comparison** of {entity_label} "
-                        f"({entity_list}) for {status_text} for {filter_text}:\n\n"
-                    )
-                else:
-                    header = (
-                        f"Here is a **side-by-side comparison** for {status_text} for {filter_text}:\n\n"
-                    )
-                
-                core_answer = header + (preview_md or "")
-
-        # SUM (default), TOP N – same textual skeleton
-        elif aggregation in ("sum_mci", "top_n"):
-            if group_df is None:
-                core_answer = (
-                    f"Based on {status_text} for {filter_text}, the total ordered amount is "
-                    f"**{numeric_value:,.0f} mCi**, calculated from **{row_count}** rows."
-                )
-            else:
-                preview_md = group_df.to_markdown(index=False)
+                entity_label = entity_type
+            
+            # Build the header
+            if entities and len(entities) > 0:
+                entity_list = " vs ".join([f"**{e}**" for e in entities])
                 header = (
-                    f"Here is a breakdown for {status_text} for {filter_text}. "
-                    f"The total across all groups is **{numeric_value:,.0f} mCi** "
-                    f"(from **{row_count}** rows).\n\n"
+                    f"Here is a **side-by-side comparison** of {entity_label} "
+                    f"({entity_list}) for {status_text} for {filter_text}:\n\n"
                 )
-                core_answer = header + preview_md
+            else:
+                header = (
+                    f"Here is a **side-by-side comparison** for {status_text} for {filter_text}:\n\n"
+                )
+            
+            core_answer = header + (preview_md or "")
 
-        # AVERAGE
-        elif aggregation == "average_mci":
-            if group_df is None:
+    # SUM (default), TOP N – same textual skeleton
+    elif aggregation in ("sum_mci", "top_n"):
+        if group_df is None:
+            core_answer = (
+                f"Based on {status_text} for {filter_text}, the total ordered amount is "
+                f"**{numeric_value:,.0f} mCi**, calculated from **{row_count}** rows."
+            )
+        else:
+            preview_md = group_df.to_markdown(index=False)
+            header = (
+                f"Here is a breakdown for {status_text} for {filter_text}. "
+                f"The total across all groups is **{numeric_value:,.0f} mCi** "
+                f"(from **{row_count}** rows).\n\n"
+            )
+            core_answer = header + preview_md
+
+    # AVERAGE
+    elif aggregation == "average_mci":
+        if group_df is None:
+            core_answer = (
+                f"Based on {status_text} for {filter_text}, the **average ordered amount** per row is "
+                f"**{numeric_value:,.0f} mCi**, across **{row_count}** rows."
+            )
+        else:
+            preview_md = group_df.to_markdown(index=False)
+            header = (
+                f"Here is the **average ordered amount per group** for {status_text} for {filter_text}. "
+                f"The overall average across all rows is "
+                f"**{numeric_value:,.0f} mCi** (from **{row_count}** rows).\n\n"
+            )
+            core_answer = header + preview_md
+
+    # SHARE OF TOTAL
+    elif aggregation == "share_of_total":
+        share_debug = spec.get("_share_debug", {}) or {}
+        if group_df is None:
+            share_pct = numeric_value * 100.0
+            num = share_debug.get("numerator")
+            den = share_debug.get("denominator")
+
+            if num is not None and den is not None and den != 0:
                 core_answer = (
-                    f"Based on {status_text} for {filter_text}, the **average ordered amount** per row is "
-                    f"**{numeric_value:,.0f} mCi**, across **{row_count}** rows."
+                    f"Based on {status_text} for {filter_text}, the ordered amount is "
+                    f"**{num:,.0f} mCi**, which represents **{share_pct:.1f}%** "
+                    f"of the corresponding total (**{den:,.0f} mCi**)."
                 )
             else:
+                core_answer = (
+                    f"Based on {status_text} for {filter_text}, the share of total is "
+                    f"approximately **{share_pct:.1f}%**."
+                )
+        else:
+            den = share_debug.get("denominator")
+            if den is not None and den != 0:
+                denom_txt = (
+                    f"The total ordered amount (denominator) is **{den:,.0f} mCi**."
+                )
+            else:
+                denom_txt = (
+                    "The total ordered amount (denominator) is derived from the current filters."
+                )
+            preview_md = group_df.to_markdown(index=False)
+            header = (
+                f"Here is the **share of total ordered amount per group** for {status_text} "
+                f"for {filter_text}. {denom_txt}\n\n"
+            )
+            core_answer = header + preview_md
+
+    # GROWTH RATE
+    elif aggregation == "growth_rate":
+        if group_df is None:
+            if numeric_value is None or pd.isna(numeric_value):
+                core_answer = (
+                    f"Could not compute a growth rate for {status_text} for {filter_text}."
+                )
+            else:
+                pct = numeric_value * 100.0
+                core_answer = (
+                    f"Based on {status_text} for {filter_text}, the growth rate is "
+                    f"**{pct:.1f}%**."
+                )
+        else:
+            cols = list(group_df.columns)
+
+            # Week-over-week growth table
+            if "WoW_Growth_%" in cols:
                 preview_md = group_df.to_markdown(index=False)
-                header = (
-                    f"Here is the **average ordered amount per group** for {status_text} for {filter_text}. "
-                    f"The overall average across all rows is "
-                    f"**{numeric_value:,.0f} mCi** (from **{row_count}** rows).\n\n"
-                )
-                core_answer = header + preview_md
+                time_window = spec.get("time_window") or {}
+                n_weeks = time_window.get("n_weeks")
 
-        # SHARE OF TOTAL
-        elif aggregation == "share_of_total":
-            share_debug = spec.get("_share_debug", {}) or {}
-            if group_df is None:
-                share_pct = numeric_value * 100.0
-                num = share_debug.get("numerator")
-                den = share_debug.get("denominator")
-
-                if num is not None and den is not None and den != 0:
-                    core_answer = (
-                        f"Based on {status_text} for {filter_text}, the ordered amount is "
-                        f"**{num:,.0f} mCi**, which represents **{share_pct:.1f}%** "
-                        f"of the corresponding total (**{den:,.0f} mCi**)."
-                    )
-                else:
-                    core_answer = (
-                        f"Based on {status_text} for {filter_text}, the share of total is "
-                        f"approximately **{share_pct:.1f}%**."
-                    )
-            else:
-                den = share_debug.get("denominator")
-                if den is not None and den != 0:
-                    denom_txt = (
-                        f"The total ordered amount (denominator) is **{den:,.0f} mCi**."
-                    )
-                else:
-                    denom_txt = (
-                        "The total ordered amount (denominator) is derived from the current filters."
-                    )
-                preview_md = group_df.to_markdown(index=False)
-                header = (
-                    f"Here is the **share of total ordered amount per group** for {status_text} "
-                    f"for {filter_text}. {denom_txt}\n\n"
-                )
-                core_answer = header + preview_md
-
-        # GROWTH RATE
-        elif aggregation == "growth_rate":
-            if group_df is None:
-                if numeric_value is None or pd.isna(numeric_value):
-                    core_answer = (
-                        f"Could not compute a growth rate for {status_text} for {filter_text}."
-                    )
-                else:
-                    pct = numeric_value * 100.0
-                    core_answer = (
-                        f"Based on {status_text} for {filter_text}, the growth rate is "
-                        f"**{pct:.1f}%**."
-                    )
-            else:
-                cols = list(group_df.columns)
-
-                # Week-over-week growth table
-                if "WoW_Growth_%" in cols:
-                    preview_md = group_df.to_markdown(index=False)
-                    time_window = spec.get("time_window") or {}
-                    n_weeks = time_window.get("n_weeks")
-
-                    if n_weeks:
-                        header = (
-                            f"Here is the **week-over-week growth** for the last {n_weeks} weeks "
-                            f"for {filter_text}:\n\n"
-                        )
-                    else:
-                        header = (
-                            f"Here is the **week-over-week growth** "
-                            f"for {filter_text}:\n\n"
-                        )
-
-                    core_answer = header + (preview_md or "")
-
-                # Year-over-year growth table
-                elif "YoY_Growth" in cols or any(
-                    "vs" in str(c) and "Growth" in str(c) for c in cols
-                ):
-                    preview_md = group_df.to_markdown(index=False)
+                if n_weeks:
                     header = (
-                        f"Here is the **year-over-year growth** "
+                        f"Here is the **week-over-week growth** for the last {n_weeks} weeks "
                         f"for {filter_text}:\n\n"
                     )
-                    core_answer = header + (preview_md or "")
-
                 else:
-                    preview_md = group_df.to_markdown(index=False)
-                    header = f"Here is the **growth breakdown** for {filter_text}:\n\n"
-                    core_answer = header + (preview_md or "")
+                    header = (
+                        f"Here is the **week-over-week growth** "
+                        f"for {filter_text}:\n\n"
+                    )
 
-        # Fallback
-        else:
-            if group_df is None:
-                core_answer = (
-                    f"Based on {status_text} for {filter_text}, "
-                    f"the value is **{numeric_value:,.0f}** across **{row_count}** rows."
+                core_answer = header + (preview_md or "")
+
+            # Year-over-year growth table
+            elif "YoY_Growth" in cols or any(
+                "vs" in str(c) and "Growth" in str(c) for c in cols
+            ):
+                preview_md = group_df.to_markdown(index=False)
+                header = (
+                    f"Here is the **year-over-year growth** "
+                    f"for {filter_text}:\n\n"
                 )
+                core_answer = header + (preview_md or "")
+
             else:
                 preview_md = group_df.to_markdown(index=False)
-                core_answer = (
-                    f"Here is the breakdown for {status_text} for {filter_text}:\n\n"
-                    + preview_md
-                )
+                header = f"Here is the **growth breakdown** for {filter_text}:\n\n"
+                core_answer = header + (preview_md or "")
 
-        # ------------------------------------------------------------------
-        # 7) Optional metadata + chart blocks
-        # ------------------------------------------------------------------
+    # Fallback
+    else:
+        if group_df is None:
+            core_answer = (
+                f"Based on {status_text} for {filter_text}, "
+                f"the value is **{numeric_value:,.0f}** across **{row_count}** rows."
+            )
+        else:
+            preview_md = group_df.to_markdown(index=False)
+            core_answer = (
+                f"Here is the breakdown for {status_text} for {filter_text}:\n\n"
+                + preview_md
+            )
+
+    # ------------------------------------------------------------------
+    # 7) Optional metadata + chart blocks
+    # ------------------------------------------------------------------
+    meta_block = None
+    try:
+        if _should_include_metadata(spec):
+            meta_block = _build_metadata_snippet(df_filtered, spec)
+    except NameError:
         meta_block = None
-        try:
-            if _should_include_metadata(spec):
-                meta_block = _build_metadata_snippet(df_filtered, spec)
-        except NameError:
-            meta_block = None
 
+    chart_block = None
+    try:
+        if group_df is not None and not group_df.empty:
+            chart_block = _build_chart_block(group_df, spec, aggregation)
+    except NameError:
         chart_block = None
-        try:
-            if group_df is not None and not group_df.empty:
-                chart_block = _build_chart_block(group_df, spec, aggregation)
-        except NameError:
-            chart_block = None
 
-        final_answer = core_answer
+    final_answer = core_answer
 
-        if meta_block:
-            final_answer += meta_block
+    if meta_block:
+        final_answer += meta_block
 
-        if chart_block:
-            final_answer += "\n\n" + chart_block
+    if chart_block:
+        final_answer += "\n\n" + chart_block
 
-        # ------------------------------------------------------------------
-        # 8) Optional refinement pass
-        # ------------------------------------------------------------------
-        try:
-            refined_answer = _refine_answer_text(client, final_answer, question)
-        except Exception:
-            refined_answer = final_answer
+    # ------------------------------------------------------------------
+    # 8) Optional refinement pass
+    # ------------------------------------------------------------------
+    try:
+        refined_answer = _refine_answer_text(client, final_answer, question)
+    except Exception:
+        refined_answer = final_answer
 
-        return refined_answer
+    return refined_answer 
 
 # -------------------------
 # Dynamic week window logic
