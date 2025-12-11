@@ -1954,90 +1954,90 @@ def _run_aggregation(
 # APPLY THIS FIX in query_engine.py
 # Replace the entire COMPARE section in _run_aggregation() (around line 1400-1550)
 
-        # ------------------------------------------------------------------
-        # COMPARE MODE (entity or time comparison)
-        # ------------------------------------------------------------------
-    if aggregation == "compare":
-        compare = spec.get("compare") or {}
-        if compare is None:
-            compare = {}
+    # ------------------------------------------------------------------
+    # COMPARE MODE (entity or time comparison)
+    # ------------------------------------------------------------------
+if aggregation == "compare":
+    compare = spec.get("compare") or {}
+    if compare is None:
+        compare = {}
 
-        entities = compare.get("entities")
-        if entities is None:
-            entities = []
-        compare["entities"] = entities
-        spec["compare"] = compare
+    entities = compare.get("entities")
+    if entities is None:
+        entities = []
+    compare["entities"] = entities
+    spec["compare"] = compare
 
-        entity_type = compare.get("entity_type")
+    entity_type = compare.get("entity_type")
 
-        # DISTRIBUTOR COMPARISON
-        if entities and entity_type == "distributor":
-            entity_col = mapping.get("distributor")
-            print(f"\n[COMPARE] Distributor comparison mode")
-            print(f"  entity_col: {entity_col}")
-            print(f"  entities to find: {entities}")
+    # DISTRIBUTOR COMPARISON
+    if entities and entity_type == "distributor":
+        entity_col = mapping.get("distributor")
+        print(f"\n[COMPARE] Distributor comparison mode")
+        print(f"  entity_col: {entity_col}")
+        print(f"  entities to find: {entities}")
+        
+        if not entity_col or entity_col not in df_filtered.columns:
+            print(f"  ERROR: entity_col not in df_filtered.columns")
+            return None, float("nan")
+
+        # Build comparison data
+        comparison_data = []
+        
+        for ent in entities:
+            ent_lower = str(ent).lower().strip()
+            print(f"\n  Looking for: '{ent}'")
             
-            if not entity_col or entity_col not in df_filtered.columns:
-                print(f"  ERROR: entity_col not in df_filtered.columns")
+            # Case-insensitive substring match
+            mask = df_filtered[entity_col].astype(str).str.lower().str.contains(
+                ent_lower, case=False, na=False, regex=False
+            )
+            sub = df_filtered[mask]
+            
+            print(f"    Found {len(sub)} rows")
+            
+            if len(sub) > 0:
+                total_mci = float(sub[total_col].sum())
+                count = len(sub)
+                avg_mci = total_mci / count if count > 0 else 0
+                
+                comparison_data.append({
+                    "Distributor": ent,
+                    "Total_mCi": int(round(total_mci)),
+                    "Count": count,
+                    "Average_mCi": int(round(avg_mci))
+                })
+        
+        if not comparison_data:
+            print(f"  ERROR: No data found for any entity")
+            return None, float("nan")
+        
+        comparison_df = pd.DataFrame(comparison_data)
+        total_mci = float(comparison_df["Total_mCi"].sum())
+        
+        print(f"\n  Success! Total: {total_mci}")
+        return comparison_df, total_mci
+
+    # If we get here, no special case matched
+    return None, float("nan")
+        
+        # Convert to DataFrame
+        comparison_df = pd.DataFrame(comparison_data)
+        total_mci = float(comparison_df["Total_mCi"].sum())
+        
+        print(f"\n  [COMPARE] Success! Returning table with {len(comparison_df)} rows")
+        print(f"  Total across all entities: {total_mci} mCi")
+        return comparison_df, total_mci
+
+        # PRODUCT COMPARISON (similar logic)
+        if entities and entity_type in ("product_sold", "product_catalogue"):
+            prod_col = (
+                mapping.get("product_sold")
+                if entity_type == "product_sold"
+                else mapping.get("product_catalogue")
+            )
+            if not prod_col or prod_col not in df_filtered.columns:
                 return None, float("nan")
-
-            # Build comparison data
-            comparison_data = []
-            
-            for ent in entities:
-                ent_lower = str(ent).lower().strip()
-                print(f"\n  Looking for: '{ent}'")
-                
-                # Case-insensitive substring match
-                mask = df_filtered[entity_col].astype(str).str.lower().str.contains(
-                    ent_lower, case=False, na=False, regex=False
-                )
-                sub = df_filtered[mask]
-                
-                print(f"    Found {len(sub)} rows")
-                
-                if len(sub) > 0:
-                    total_mci = float(sub[total_col].sum())
-                    count = len(sub)
-                    avg_mci = total_mci / count if count > 0 else 0
-                    
-                    comparison_data.append({
-                        "Distributor": ent,
-                        "Total_mCi": int(round(total_mci)),
-                        "Count": count,
-                        "Average_mCi": int(round(avg_mci))
-                    })
-            
-            if not comparison_data:
-                print(f"  ERROR: No data found for any entity")
-                return None, float("nan")
-            
-            comparison_df = pd.DataFrame(comparison_data)
-            total_mci = float(comparison_df["Total_mCi"].sum())
-            
-            print(f"\n  Success! Total: {total_mci}")
-            return comparison_df, total_mci
-
-        # If we get here, no special case matched
-        return None, float("nan")
-            
-            # Convert to DataFrame
-            comparison_df = pd.DataFrame(comparison_data)
-            total_mci = float(comparison_df["Total_mCi"].sum())
-            
-            print(f"\n  [COMPARE] Success! Returning table with {len(comparison_df)} rows")
-            print(f"  Total across all entities: {total_mci} mCi")
-            return comparison_df, total_mci
-
-            # PRODUCT COMPARISON (similar logic)
-            if entities and entity_type in ("product_sold", "product_catalogue"):
-                prod_col = (
-                    mapping.get("product_sold")
-                    if entity_type == "product_sold"
-                    else mapping.get("product_catalogue")
-                )
-                if not prod_col or prod_col not in df_filtered.columns:
-                    return None, float("nan")
 
             def _product_subset(df: pd.DataFrame, label: str) -> pd.DataFrame:
                 label = str(label).lower()
