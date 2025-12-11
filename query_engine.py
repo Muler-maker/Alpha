@@ -3181,9 +3181,7 @@ def answer_question_from_df(
     # ------------------------------------------------------------------
     core_answer = ""
 
-# In answer_question_from_df(), find the COMPARE section and replace it with:
-
-    # COMPARE - distributor/product comparison
+# COMPARE - distributor/product comparison
     if aggregation == "compare":
         if group_df is None:
             core_answer = (
@@ -3191,18 +3189,6 @@ def answer_question_from_df(
                 f"the total ordered amount is **{numeric_value:,.0f} mCi**."
             )
         else:
-            # Format the DataFrame properly before converting to markdown
-            df_display = group_df.copy()
-            
-            # Ensure numeric columns are properly formatted
-            for col in df_display.columns:
-                if col in ["Total_mCi", "Average_mCi"]:
-                    df_display[col] = df_display[col].apply(lambda x: f"{int(x):,}")
-                elif col == "Count":
-                    df_display[col] = df_display[col].apply(lambda x: str(int(x)))
-            
-            preview_md = df_display.to_markdown(index=False)
-            
             # Build a better header that shows what we're comparing
             compare = spec.get("compare") or {}
             entity_type = compare.get("entity_type", "entities")
@@ -3230,12 +3216,23 @@ def answer_question_from_df(
                     f"Here is a **side-by-side comparison** for {status_text} for {filter_text}:\n\n"
                 )
             
-            # Ensure preview_md is not None before concatenating
-            if preview_md:
-                core_answer = header + preview_md
-            else:
-                # Fallback if markdown conversion fails
-                core_answer = header + "Unable to generate table"
+            # Manually build the markdown table
+            table_lines = []
+            table_lines.append("| Distributor | Total_mCi | Count | Average_mCi |")
+            table_lines.append("|---|---|---|---|")
+            
+            for idx, row in group_df.iterrows():
+                distributor = str(row.get("Distributor", ""))
+                total_mci = int(row.get("Total_mCi", 0))
+                count = int(row.get("Count", 0))
+                avg_mci = int(row.get("Average_mCi", 0))
+                
+                table_lines.append(
+                    f"| {distributor} | {total_mci:,} | {count} | {avg_mci:,} |"
+                )
+            
+            table_md = "\n".join(table_lines)
+            core_answer = header + table_md
 
     # SUM (default), TOP N – same textual skeleton
     elif aggregation in ("sum_mci", "top_n"):
