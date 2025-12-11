@@ -3403,7 +3403,7 @@ core_answer = ""
     except Exception:
         refined_answer = final_answer
 
-    return refined_answer 
+    return refined_answer
 
 # -------------------------
 # Dynamic week window logic
