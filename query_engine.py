@@ -1864,6 +1864,127 @@ def _run_aggregation(
 # ===========================================================================
 # HELPER: COMPARE AGGREGATION
 # ===========================================================================
+def _run_aggregation(
+    df_filtered: pd.DataFrame,
+    spec: Dict[str, Any],
+    full_df: Optional[pd.DataFrame] = None,
+) -> Tuple[Optional[pd.DataFrame], float]:
+    """
+    Run the specified aggregation (sum, average, share_of_total, growth_rate, top_n, compare)
+    on the filtered data.
+    """
+    if df_filtered is None or not isinstance(df_filtered, pd.DataFrame) or df_filtered.empty:
+        return None, float("nan")
+
+    base_df = df_filtered
+    mapping = _get_mapping(base_df)
+    total_col = mapping.get("total_mci")
+
+    if not total_col or total_col not in base_df.columns:
+        return None, float("nan")
+
+    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
+    group_by = spec.get("group_by") or []
+    group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
+
+    print(f"\n{'='*70}")
+    print(f"_run_aggregation() - {aggregation.upper()}")
+    print(f"{'='*70}")
+    print(f"  Input shape: {base_df.shape}")
+    print(f"  Aggregation: {aggregation}")
+    print(f"  Group by: {group_by}")
+    print(f"  Total col: {total_col}")
+
+    # ===========================================================================
+    # COMPARE MODE (entity or time comparison)
+    # ===========================================================================
+    if aggregation == "compare":
+        return _run_compare_aggregation(base_df, spec, mapping, total_col)
+
+    # ===========================================================================
+    # TOP N (ranking entities by volume)
+    # ===========================================================================
+    if aggregation == "top_n":
+        return _run_top_n_aggregation(base_df, spec, mapping, total_col)
+
+    # ===========================================================================
+    # GROWTH RATE (WoW / YoY)
+    # ===========================================================================
+    if aggregation == "growth_rate":
+        return _run_growth_rate_aggregation(base_df, spec, mapping, total_col, group_cols)
+
+    # ===========================================================================
+    # STANDARD AGGREGATIONS (sum, average, share_of_total)
+    # ===========================================================================
+    
+    # For sum_mci: just sum the total_col
+    if aggregation == "sum_mci":
+        overall_value = float(base_df[total_col].sum())
+        
+        if not group_cols:
+            # No grouping: just return the sum
+            print(f"  No grouping → returning scalar: {overall_value:.0f}")
+            return None, overall_value
+        
+        # Group and sum
+        grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].sum()
+        grouped_df = grouped_df.sort_values(total_col, ascending=False)
+        
+        # Format mCi column
+        grouped_df[total_col] = grouped_df[total_col].round(0).astype(int)
+        
+        print(f"  Grouped result shape: {grouped_df.shape}")
+        return grouped_df, overall_value
+
+    # For average_mci
+    if aggregation == "average_mci":
+        overall_value = float(base_df[total_col].mean())
+        
+        if not group_cols:
+            print(f"  No grouping → returning scalar: {overall_value:.0f}")
+            return None, overall_value
+        
+        # Group and average
+        grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].mean()
+        grouped_df = grouped_df.sort_values(total_col, ascending=False)
+        grouped_df[total_col] = grouped_df[total_col].round(0).astype(int)
+        
+        print(f"  Grouped result shape: {grouped_df.shape}")
+        return grouped_df, overall_value
+
+    # For share_of_total
+    if aggregation == "share_of_total":
+        total_overall = float(base_df[total_col].sum())
+        
+        if not group_cols:
+            # Single value: share is 100%
+            overall_value = 1.0
+            print(f"  No grouping → returning scalar: {overall_value*100:.1f}%")
+            return None, overall_value
+        
+        # Group and calculate share
+        grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].sum()
+        grouped_df["Share_%"] = (grouped_df[total_col] / total_overall * 100.0).round(1)
+        grouped_df = grouped_df.sort_values(total_col, ascending=False)
+        
+        grouped_df[total_col] = grouped_df[total_col].round(0).astype(int)
+        
+        # Store denominator for display
+        share_debug = {"numerator": float(grouped_df[total_col].sum()), "denominator": total_overall}
+        spec["_share_debug"] = share_debug
+        
+        print(f"  Grouped result shape: {grouped_df.shape}")
+        return grouped_df, (grouped_df[total_col].sum() / total_overall)
+
+    # Fallback: unknown aggregation
+    print(f"  ⚠️ Unknown aggregation type: {aggregation}")
+    overall_value = float(base_df[total_col].sum())
+    return None, overall_value
+
+
+# ===========================================================================
+# HELPER: COMPARE AGGREGATION
+# ===========================================================================
 def _run_compare_aggregation(
     base_df: pd.DataFrame,
     spec: Dict[str, Any],
@@ -1899,6 +2020,12 @@ def _run_compare_aggregation(
         print(f"\n[COMPARE-DIST] Distributor comparison")
         print(f"  entity_col: {entity_col}")
         print(f"  base_df.shape: {base_df.shape}")
+        print(f"  entities to compare: {entities}")
+        
+        # DEBUG: Show what's actually in the distributor column
+        if entity_col and entity_col in base_df.columns:
+            unique_dists = base_df[entity_col].dropna().unique()
+            print(f"  Unique distributors in base_df: {list(unique_dists)[:10]}")
 
         if not entity_col or entity_col not in base_df.columns:
             print(f"  ❌ ERROR: entity_col '{entity_col}' not in base_df.columns")
@@ -1919,6 +2046,11 @@ def _run_compare_aggregation(
             sub = base_df[mask]
 
             print(f"    Found {len(sub)} matching rows")
+            
+            # DEBUG: Show sample values that matched
+            if len(sub) > 0:
+                sample_dists = sub[entity_col].unique()[:3]
+                print(f"    Sample matches: {sample_dists}")
 
             if len(sub) > 0:
                 total_mci = float(sub[total_col].sum())
@@ -1941,6 +2073,11 @@ def _run_compare_aggregation(
                     "Average_mCi": 0
                 })
                 print(f"    ⚠️  No data - added zero row")
+                # DEBUG: Show what values are actually in the column
+                all_vals = base_df[entity_col].dropna().unique()
+                print(f"    All distributor values in base_df:")
+                for val in all_vals[:15]:
+                    print(f"      - '{val}'")
 
         if not comparison_data:
             print(f"  ❌ No comparison data generated!")
