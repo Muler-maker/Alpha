@@ -1957,18 +1957,26 @@ def _run_aggregation(
     # ------------------------------------------------------------------
     # COMPARE MODE (entity or time comparison)
     # ------------------------------------------------------------------
-if aggregation == "compare":
-    compare = spec.get("compare") or {}
-    if compare is None:
-        compare = {}
+    if aggregation == "compare":
+        compare = spec.get("compare") or {}
+        if compare is None:
+            compare = {}
+        spec["compare"] = compare
 
-    entities = compare.get("entities")
-    if entities is None:
-        entities = []
-    compare["entities"] = entities
-    spec["compare"] = compare
+        entities = compare.get("entities")
+        if entities is None:
+            entities = []
+        compare["entities"] = entities
+        spec["compare"] = compare
 
-    entity_type = compare.get("entity_type")
+        entity_type = compare.get("entity_type")
+
+        print(f"\n[COMPARE] Starting compare mode")
+        print(f"  entities: {entities}")
+        print(f"  entity_type: {entity_type}")
+
+# REPLACE the DISTRIBUTOR COMPARISON section in _run_aggregation()
+# Find this section (around line 1420-1480) and replace it entirely:
 
     # DISTRIBUTOR COMPARISON
     if entities and entity_type == "distributor":
@@ -1978,15 +1986,16 @@ if aggregation == "compare":
         print(f"  entities to find: {entities}")
         
         if not entity_col or entity_col not in df_filtered.columns:
-            print(f"  ERROR: entity_col not in df_filtered.columns")
+            print(f"  [COMPARE] ERROR: entity_col '{entity_col}' not in df_filtered.columns")
+            print(f"  Available columns: {list(df_filtered.columns)[:10]}")
             return None, float("nan")
 
-        # Build comparison data
+        # Build comparison data - use case-insensitive substring matching
         comparison_data = []
         
         for ent in entities:
             ent_lower = str(ent).lower().strip()
-            print(f"\n  Looking for: '{ent}'")
+            print(f"\n  Looking for entity: '{ent}' (lowercase: '{ent_lower}')")
             
             # Case-insensitive substring match
             mask = df_filtered[entity_col].astype(str).str.lower().str.contains(
@@ -1994,7 +2003,7 @@ if aggregation == "compare":
             )
             sub = df_filtered[mask]
             
-            print(f"    Found {len(sub)} rows")
+            print(f"    Found {len(sub)} rows matching '{ent_lower}'")
             
             if len(sub) > 0:
                 total_mci = float(sub[total_col].sum())
@@ -2007,19 +2016,19 @@ if aggregation == "compare":
                     "Count": count,
                     "Average_mCi": int(round(avg_mci))
                 })
+                print(f"    Added to comparison: {int(round(total_mci))} mCi")
+            else:
+                print(f"    NO DATA FOUND - checking what's in the column:")
+                sample = df_filtered[entity_col].dropna().unique()[:5]
+                print(f"    Sample values: {sample}")
         
         if not comparison_data:
-            print(f"  ERROR: No data found for any entity")
+            print(f"  [COMPARE] ERROR: No data found for any entity!")
+            print(f"  All unique values in '{entity_col}':")
+            all_vals = df_filtered[entity_col].dropna().unique()
+            for val in all_vals[:20]:
+                print(f"    - {val}")
             return None, float("nan")
-        
-        comparison_df = pd.DataFrame(comparison_data)
-        total_mci = float(comparison_df["Total_mCi"].sum())
-        
-        print(f"\n  Success! Total: {total_mci}")
-        return comparison_df, total_mci
-
-    # If we get here, no special case matched
-    return None, float("nan")
         
         # Convert to DataFrame
         comparison_df = pd.DataFrame(comparison_data)
