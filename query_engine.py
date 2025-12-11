@@ -3181,6 +3181,8 @@ def answer_question_from_df(
     # ------------------------------------------------------------------
     core_answer = ""
 
+# In answer_question_from_df(), find the COMPARE section and replace it with:
+
     # COMPARE - distributor/product comparison
     if aggregation == "compare":
         if group_df is None:
@@ -3189,11 +3191,51 @@ def answer_question_from_df(
                 f"the total ordered amount is **{numeric_value:,.0f} mCi**."
             )
         else:
-            preview_md = group_df.to_markdown(index=False)
-            header = (
-                f"Here is a **side-by-side comparison** for {status_text} for {filter_text}:\n\n"
-            )
-            core_answer = header + (preview_md or "")
+            # Format the DataFrame properly before converting to markdown
+            df_display = group_df.copy()
+            
+            # Ensure numeric columns are properly formatted
+            for col in df_display.columns:
+                if col in ["Total_mCi", "Average_mCi"]:
+                    df_display[col] = df_display[col].apply(lambda x: f"{int(x):,}")
+                elif col == "Count":
+                    df_display[col] = df_display[col].apply(lambda x: str(int(x)))
+            
+            preview_md = df_display.to_markdown(index=False)
+            
+            # Build a better header that shows what we're comparing
+            compare = spec.get("compare") or {}
+            entity_type = compare.get("entity_type", "entities")
+            entities = compare.get("entities", [])
+            
+            # Humanize the entity type
+            if entity_type == "distributor":
+                entity_label = "distributors"
+            elif entity_type == "product_sold":
+                entity_label = "products (sold as)"
+            elif entity_type == "product_catalogue":
+                entity_label = "products (catalogue)"
+            else:
+                entity_label = entity_type
+            
+            # Build the header
+            if entities and len(entities) > 0:
+                entity_list = " vs ".join([f"**{e}**" for e in entities])
+                header = (
+                    f"Here is a **side-by-side comparison** of {entity_label} "
+                    f"({entity_list}) for {status_text} for {filter_text}:\n\n"
+                )
+            else:
+                header = (
+                    f"Here is a **side-by-side comparison** for {status_text} for {filter_text}:\n\n"
+                )
+            
+            # Ensure preview_md is not None before concatenating
+            if preview_md:
+                core_answer = header + preview_md
+            else:
+                # Fallback if markdown conversion fails
+                core_answer = header + "Unable to generate table"
 
     # SUM (default), TOP N – same textual skeleton
     elif aggregation in ("sum_mci", "top_n"):
