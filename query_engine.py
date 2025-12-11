@@ -1855,7 +1855,6 @@ def _run_aggregation(
     # COMPARE MODE (entity or time comparison)
     # ------------------------------------------------------------------
     if aggregation == "compare":
-        # Normalize compare and entities so they are never None
         compare = spec.get("compare") or {}
         if compare is None:
             compare = {}
@@ -1889,7 +1888,7 @@ def _run_aggregation(
             if not rows_by_entity:
                 return None, float("nan")
 
-            # Build comparison table
+            # Build comparison table - with group_by support
             comparison_data = []
             
             for ent in entities:
@@ -1898,44 +1897,64 @@ def _run_aggregation(
                 
                 sub = rows_by_entity[ent]
                 
-                # Calculate metrics
-                total_mci = float(sub[total_col].sum())
-                count = len(sub)
-                avg_mci = total_mci / count if count > 0 else 0
-                
-                row = {
-                    "Distributor": ent,
-                    "Total_mCi": int(round(total_mci)),
-                    "Count": count,
-                    "Average_mCi": int(round(avg_mci))
-                }
-                
-                comparison_data.append(row)
+                # If group_by is specified (e.g., by week), create multiple rows
+                if group_by and group_by != ["distributor"]:
+                    # Get the columns to group by
+                    group_cols_for_entity = [mapping.get(field) for field in group_by if mapping.get(field) and field != "distributor"]
+                    
+                    if group_cols_for_entity:
+                        # Group by the time/entity dimensions
+                        grouped = sub.groupby(group_cols_for_entity, as_index=False)[total_col].sum()
+                        
+                        for idx, grp_row in grouped.iterrows():
+                            row = {"Distributor": ent}
+                            
+                            # Add the grouping dimensions
+                            for col in group_cols_for_entity:
+                                if col:
+                                    row[col] = grp_row[col]
+                            
+                            # Add metrics
+                            total_mci = float(grp_row[total_col])
+                            row["Total_mCi"] = int(round(total_mci))
+                            row["Count"] = len(sub[sub[group_cols_for_entity[0]] == grp_row[group_cols_for_entity[0]]])
+                            row["Average_mCi"] = int(round(total_mci / row["Count"])) if row["Count"] > 0 else 0
+                            
+                            comparison_data.append(row)
+                    else:
+                        # No valid group columns, fall back to totals
+                        total_mci = float(sub[total_col].sum())
+                        count = len(sub)
+                        avg_mci = total_mci / count if count > 0 else 0
+                        
+                        comparison_data.append({
+                            "Distributor": ent,
+                            "Total_mCi": int(round(total_mci)),
+                            "Count": count,
+                            "Average_mCi": int(round(avg_mci))
+                        })
+                else:
+                    # No grouping - just totals
+                    total_mci = float(sub[total_col].sum())
+                    count = len(sub)
+                    avg_mci = total_mci / count if count > 0 else 0
+                    
+                    comparison_data.append({
+                        "Distributor": ent,
+                        "Total_mCi": int(round(total_mci)),
+                        "Count": count,
+                        "Average_mCi": int(round(avg_mci))
+                    })
             
-            # Convert to DataFrame for return value
+            # Convert to DataFrame
             comparison_df = pd.DataFrame(comparison_data)
             
             # Calculate total across all entities
             total_mci = float(comparison_df["Total_mCi"].sum())
             
-            # IMPORTANT: Store the markdown table in the spec so it can be used in answer building
-            # This is a workaround to preserve markdown through the refinement process
-            table_lines = []
-            table_lines.append("| Distributor | Total_mCi | Count | Average_mCi |")
-            table_lines.append("|---|---|---|---|")
-            
-            for idx, row in comparison_df.iterrows():
-                distributor = str(row.get("Distributor", ""))
-                total = int(row.get("Total_mCi", 0))
-                cnt = int(row.get("Count", 0))
-                avg = int(row.get("Average_mCi", 0))
-                table_lines.append(f"| {distributor} | {total:,} | {cnt} | {avg:,} |")
-            
-            spec["_markdown_table"] = "\n".join(table_lines)
-            
             return comparison_df, total_mci
 
-        # PRODUCT COMPARISON
+        # PRODUCT COMPARISON (similar logic)
         if entities and entity_type in ("product_sold", "product_catalogue"):
             prod_col = (
                 mapping.get("product_sold")
@@ -2003,21 +2022,6 @@ def _run_aggregation(
 
             comparison_df = pd.DataFrame(comparison_data)
             total_mci = float(comparison_df["Total_mCi"].sum())
-            
-            # Store markdown table for product comparison too
-            table_lines = []
-            table_lines.append("| Product | Total_mCi | Count | Average_mCi |")
-            table_lines.append("|---|---|---|---|")
-            
-            for idx, row in comparison_df.iterrows():
-                product = str(row.get("Product", ""))
-                total = int(row.get("Total_mCi", 0))
-                cnt = int(row.get("Count", 0))
-                avg = int(row.get("Average_mCi", 0))
-                table_lines.append(f"| {product} | {total:,} | {cnt} | {avg:,} |")
-            
-            spec["_markdown_table"] = "\n".join(table_lines)
-            
             return comparison_df, total_mci
 
         # Fallback: simple grouping
