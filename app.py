@@ -482,7 +482,7 @@ def main():
 
     st.markdown("</div></div></div>", unsafe_allow_html=True)
 
-    # ---------- PROCESS NEW QUESTION ----------
+# ---------- PROCESS NEW QUESTION ----------
     if submitted and prompt.strip():
         user_text = prompt.strip()
 
@@ -491,7 +491,6 @@ def main():
 
         # Generate raw answer (with potential chart blocks)
         try:
-       
             raw_answer = answer_question_from_df(
                 user_text,
                 df,
@@ -499,6 +498,73 @@ def main():
             )
         except Exception as e:
             raw_answer = f"An error occurred: {e}"
+
+        # ---------------------------------
+        # ✨ OPTIONAL GPT REFINEMENT LAYER
+        # ---------------------------------
+        refined_answer = raw_answer
+
+        if client is not None:
+            try:
+                # Remove chart blocks before sending to GPT
+                answer_without_charts = strip_chart_blocks(raw_answer)
+
+                # Check if there's a markdown table in the answer
+                has_table = "|" in answer_without_charts and "---" in answer_without_charts
+
+                if has_table:
+                    # If there's a table, don't refine - preserve it as-is
+                    refined_answer = answer_without_charts
+                else:
+                    # Only refine if there's no table
+                    prompt_refine = f"""
+You are Alpha, a senior data analyst.
+
+Refine the text below so that it:
+- sounds natural and non-robotic
+- preserves ALL numbers exactly
+- keeps markdown formatting
+- does NOT add or infer new data
+- keeps the structure clear and concise
+
+Text:
+---
+{answer_without_charts}
+---
+"""
+
+                    response = client.chat.completions.create(
+                        model="gpt-4.1-mini",
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You refine analytical outputs for business users.",
+                            },
+                            {"role": "user", "content": prompt_refine},
+                        ],
+                        temperature=0.2,
+                    )
+
+                    refined_answer = response.choices[0].message.content.strip()
+
+            except Exception:
+                # If refinement fails, fall back to raw answer
+                refined_answer = strip_chart_blocks(raw_answer)
+
+        # For display we use the refined text (no chart blocks)
+        cleaned = refined_answer
+
+        # Store assistant message with BOTH:
+        # - content (refined text for chat)
+        # - raw_answer (original with chart blocks for rendering)
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": cleaned,
+            "raw_answer": raw_answer,
+        })
+
+        # Rerun so the updated chat (and charts) are rendered above
+        st.rerun()
 
         # ---------------------------------
         # ✨ OPTIONAL GPT REFINEMENT LAYER
