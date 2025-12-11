@@ -110,6 +110,98 @@ def _get_mapping(df: pd.DataFrame) -> Dict[str, Optional[str]]:
 # --------------------------------------------------------------------
 # 1) INTERPRETATION LAYER – turn NL question → JSON spec
 # -----------------------
+def _expand_distributor_name(text: str) -> Optional[str]:
+    """
+    Map short names to full distributor names.
+    """
+    text = text.strip().lower()
+    
+    mapping = {
+        "dsd": "DSD Pharma GmbH",
+        "dsd pharma": "DSD Pharma GmbH",
+        "pi medical": "PI Medical Diagnostic Equipment B.V.",
+        "pi": "PI Medical Diagnostic Equipment B.V.",
+        "scantor": "Scantor",
+        "scintomics": "Scintomics",
+        "sinotau": "Sinotau",
+    }
+    
+    if text in mapping:
+        return mapping[text]
+    
+    for key, value in mapping.items():
+        if key in text or text in key:
+            return value
+    
+    return None
+
+
+def _detect_entity_comparison_from_text(question: str, spec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Post-process question text to detect comparison patterns.
+    Handles: "Compare X to Y", "X vs Y", etc.
+    """
+    q_lower = (question or "").lower()
+    
+    # Skip if already marked as comparison
+    if spec.get("aggregation") == "compare":
+        return spec
+    
+    # Pattern 1: "Compare X to Y"
+    compare_pattern = r"compare\s+([a-z\s]+?)\s+(?:to|vs|versus)\s+([a-z\s]+?)(?:\s+in\s+|$)"
+    m = re.search(compare_pattern, q_lower)
+    
+    if m:
+        entity_a = m.group(1).strip()
+        entity_b = m.group(2).strip()
+        print(f"[DETECT] Matched 'Compare X to Y': '{entity_a}' vs '{entity_b}'")
+        
+        entity_a = _expand_distributor_name(entity_a)
+        entity_b = _expand_distributor_name(entity_b)
+        
+        if entity_a and entity_b:
+            spec["aggregation"] = "compare"
+            compare = spec.get("compare") or {}
+            compare["entities"] = [entity_a, entity_b]
+            compare["entity_type"] = "distributor"
+            spec["compare"] = compare
+            
+            filters = spec.get("filters") or {}
+            filters["distributor"] = None
+            spec["filters"] = filters
+            
+            spec["_question_text"] = question
+            return spec
+    
+    # Pattern 2: "X vs Y"
+    vs_pattern = r"\b([a-z\s]+?)\s+(?:vs|versus)\s+([a-z\s]+?)(?:\s+in\s+|$)"
+    m = re.search(vs_pattern, q_lower)
+    
+    if m:
+        entity_a = m.group(1).strip()
+        entity_b = m.group(2).strip()
+        
+        entity_a_expanded = _expand_distributor_name(entity_a)
+        entity_b_expanded = _expand_distributor_name(entity_b)
+        
+        if entity_a_expanded and entity_b_expanded:
+            print(f"[DETECT] Matched 'X vs Y': '{entity_a_expanded}' vs '{entity_b_expanded}'")
+            
+            spec["aggregation"] = "compare"
+            compare = spec.get("compare") or {}
+            compare["entities"] = [entity_a_expanded, entity_b_expanded]
+            compare["entity_type"] = "distributor"
+            spec["compare"] = compare
+            
+            filters = spec.get("filters") or {}
+            filters["distributor"] = None
+            spec["filters"] = filters
+            
+            spec["_question_text"] = question
+            return spec
+    
+    return spec
+
 def _interpret_question_with_llm(
     question: str,
     history: Optional[List[Dict[str, str]]] = None,
@@ -254,6 +346,11 @@ ALWAYS:
     except Exception as e:
         st.warning(f"LLM error: {e}")
         spec = _interpret_question_fallback(question)
+
+    # ===== CRITICAL: POST-PROCESS FOR DISTRIBUTOR COMPARISON =====
+    spec = _detect_entity_comparison_from_text(question, spec)
+
+    # SAFETY: Ensure spec has all required keys with proper types
 
     # SAFETY: Ensure spec has all required keys with proper types
     if spec is None:
