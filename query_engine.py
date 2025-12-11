@@ -3207,9 +3207,26 @@ def answer_question_from_df(
         spec["group_by"] = gb
 
     # ------------------------------------------------------------------
-    # 2) Apply filters (with a small adjustment for growth_rate + YoY)
+    # 2) Apply filters (with special handling for growth_rate & compare)
     # ------------------------------------------------------------------
     spec_for_filtering = dict(spec)  # shallow copy is fine here
+
+    # CRITICAL FIX: Clear distributor filter when comparing distributors
+    if spec.get("aggregation") == "compare":
+        compare = spec.get("compare") or {}
+        if compare.get("entity_type") == "distributor":
+            print(f"\n[FIX] Clearing distributor filter for comparison")
+            print(f"  Entities: {compare.get('entities')}")
+            
+            filters = spec_for_filtering.get("filters") or {}
+            old_dist = filters.get("distributor")
+            filters["distributor"] = None
+            spec_for_filtering["filters"] = filters
+            
+            print(f"  Changed distributor filter from '{old_dist}' → None")
+            print(f"  This allows BOTH distributors' data to be included")
+
+    # Growth rate: clear year filter to include all years
     if spec.get("aggregation") == "growth_rate":
         group_by = spec.get("group_by") or []
         if "year" in group_by:
