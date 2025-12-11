@@ -1910,22 +1910,28 @@ def _run_aggregation(
                     "Average_mCi": int(round(avg_mci))
                 }
                 
-                # Add breakdown by group_by dimensions if specified
-                if group_by and group_by != ["distributor"]:
-                    sub_grouped = sub.groupby(
-                        [mapping.get(g) for g in group_by if mapping.get(g) and g != "distributor"],
-                        as_index=False
-                    )[total_col].sum()
-                    row["_grouped_data"] = sub_grouped
-                
                 comparison_data.append(row)
             
-            # Convert to DataFrame
+            # Convert to DataFrame for return value
             comparison_df = pd.DataFrame(comparison_data)
-            comparison_df = comparison_df.drop(columns=["_grouped_data"], errors="ignore")
             
             # Calculate total across all entities
             total_mci = float(comparison_df["Total_mCi"].sum())
+            
+            # IMPORTANT: Store the markdown table in the spec so it can be used in answer building
+            # This is a workaround to preserve markdown through the refinement process
+            table_lines = []
+            table_lines.append("| Distributor | Total_mCi | Count | Average_mCi |")
+            table_lines.append("|---|---|---|---|")
+            
+            for idx, row in comparison_df.iterrows():
+                distributor = str(row.get("Distributor", ""))
+                total = int(row.get("Total_mCi", 0))
+                cnt = int(row.get("Count", 0))
+                avg = int(row.get("Average_mCi", 0))
+                table_lines.append(f"| {distributor} | {total:,} | {cnt} | {avg:,} |")
+            
+            spec["_markdown_table"] = "\n".join(table_lines)
             
             return comparison_df, total_mci
 
@@ -1997,6 +2003,21 @@ def _run_aggregation(
 
             comparison_df = pd.DataFrame(comparison_data)
             total_mci = float(comparison_df["Total_mCi"].sum())
+            
+            # Store markdown table for product comparison too
+            table_lines = []
+            table_lines.append("| Product | Total_mCi | Count | Average_mCi |")
+            table_lines.append("|---|---|---|---|")
+            
+            for idx, row in comparison_df.iterrows():
+                product = str(row.get("Product", ""))
+                total = int(row.get("Total_mCi", 0))
+                cnt = int(row.get("Count", 0))
+                avg = int(row.get("Average_mCi", 0))
+                table_lines.append(f"| {product} | {total:,} | {cnt} | {avg:,} |")
+            
+            spec["_markdown_table"] = "\n".join(table_lines)
+            
             return comparison_df, total_mci
 
         # Fallback: simple grouping
@@ -2008,177 +2029,6 @@ def _run_aggregation(
 
         total_mci = float(df_filtered[total_col].sum())
         return None, total_mci
-
-    # ------------------------------------------------------------------
-    # PROJECTION VS ACTUAL
-    # ------------------------------------------------------------------
-    if aggregation == "projection_vs_actual":
-        print("\n🔴 PROJECTION_VS_ACTUAL aggregation()")
-        print(f"  group_by: {group_by}")
-        print(f"  initial group_cols (from mapping): {group_cols}")
-        print(f"  df_filtered.shape: {df_filtered.shape}")
-        print(f"  df_filtered columns: {list(df_filtered.columns)}")
-
-        actual_col = mapping.get("total_mci")
-        proj_col = mapping.get("proj_mci")
-
-        print(f"  actual_col: {actual_col}")
-        print(f"  proj_col: {proj_col}")
-
-        if not actual_col or actual_col not in df_filtered.columns:
-            print("  ⚠️ Missing actual_col in df_filtered → aborting projection_vs_actual")
-            return None, float("nan")
-        if not proj_col or proj_col not in df_filtered.columns:
-            print("  ⚠️ Missing proj_col in df_filtered → aborting projection_vs_actual")
-            return None, float("nan")
-
-        if "week" in group_by:
-            if "Week number for Activity vs Projection" in df_filtered.columns:
-                new_group_cols: List[str] = []
-                for field in group_by:
-                    if field == "week":
-                        new_group_cols.append("Week number for Activity vs Projection")
-                    elif mapping.get(field):
-                        new_group_cols.append(mapping[field])
-                print(f"  Remapped group_cols to activity/projection week: {new_group_cols}")
-                group_cols = new_group_cols
-
-        proj_keys = [
-            c
-            for c in [
-                "Year",
-                "ProjWeek",
-                "Week number for Activity vs Projection",
-                "Distributor",
-                "Catalogue description (sold as)",
-            ]
-            if c in df_filtered.columns
-        ]
-        print(f"  proj_keys used for drop_duplicates: {proj_keys}")
-
-        df_actual = df_filtered
-
-        if proj_keys:
-            df_proj = df_filtered.drop_duplicates(subset=proj_keys)
-        else:
-            df_proj = df_filtered
-
-        print(f"  df_actual.shape: {df_actual.shape}")
-        print(f"  df_proj.shape: {df_proj.shape}")
-
-        if group_cols:
-            print(f"  Grouping by: {group_cols}")
-
-            grp_actual = (
-                df_actual
-                .groupby(group_cols, as_index=False)[actual_col]
-                .sum()
-                .rename(columns={actual_col: "Actual_mCi"})
-            )
-
-            grp_proj = (
-                df_proj
-                .groupby(group_cols, as_index=False)[proj_col]
-                .sum()
-                .rename(columns={proj_col: "Projected_mCi"})
-            )
-
-            print(f"  grp_actual.shape: {grp_actual.shape}")
-            print(f"  grp_proj.shape: {grp_proj.shape}")
-
-            merged = pd.merge(grp_actual, grp_proj, on=group_cols, how="outer")
-        else:
-            print("  No group_cols – computing single total actual vs projection")
-            actual_total = float(df_actual[actual_col].sum())
-            projected_total = float(df_proj[proj_col].sum())
-
-            merged = pd.DataFrame(
-                {
-                    "Actual_mCi": [actual_total],
-                    "Projected_mCi": [projected_total],
-                }
-            )
-
-        merged["Actual_mCi"] = merged["Actual_mCi"].fillna(0.0)
-        merged["Projected_mCi"] = merged["Projected_mCi"].fillna(0.0)
-        merged["Delta_mCi"] = merged["Actual_mCi"] - merged["Projected_mCi"]
-        merged["DeltaPct"] = merged.apply(
-            lambda r: (r["Delta_mCi"] / r["Projected_mCi"] * 100.0)
-            if r["Projected_mCi"] not in (0, 0.0)
-            else float("nan"),
-            axis=1,
-        )
-
-        print(f"  merged.shape: {merged.shape}")
-        print(f"  merged.head():\n{merged.head()}")
-
-        total_actual = float(merged["Actual_mCi"].sum())
-        print(f"  total_actual: {total_actual}")
-        return merged, total_actual
-
-    # ------------------------------------------------------------------
-    # SUM (default)
-    # ------------------------------------------------------------------
-    if aggregation == "sum_mci":
-        total_mci = float(df_filtered[total_col].sum())
-        if group_cols:
-            grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
-            grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
-            return grouped_df, total_mci
-        return None, total_mci
-
-    # ------------------------------------------------------------------
-    # AVERAGE
-    # ------------------------------------------------------------------
-    if aggregation == "average_mci":
-        if not group_cols:
-            avg_val = float(df_filtered[total_col].mean())
-            return None, avg_val
-
-        grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].mean()
-        grouped_df = grouped_df.rename(columns={total_col: "Average_mCi"})
-        overall_avg = float(df_filtered[total_col].mean())
-        return grouped_df, overall_avg
-
-    # ------------------------------------------------------------------
-    # SHARE OF TOTAL
-    # ------------------------------------------------------------------
-    if aggregation == "share_of_total":
-        if group_cols:
-            total = float(df_filtered[total_col].sum())
-            if total == 0:
-                spec["_share_debug"] = {"denominator": 0.0}
-                return None, float("nan")
-
-            grouped_df = df_filtered.groupby(group_cols, as_index=False)[total_col].sum()
-            grouped_df["ShareOfTotal"] = grouped_df[total_col] / total
-            spec["_share_debug"] = {"denominator": total}
-            return grouped_df, float("nan")
-
-        if full_df is None or not isinstance(full_df, pd.DataFrame):
-            return None, float("nan")
-
-        numerator = float(df_filtered[total_col].sum())
-        base_spec = copy.deepcopy(spec)
-        base_filters = base_spec.get("filters", {}) or {}
-
-        for k in ["customer", "distributor", "country", "region"]:
-            base_filters[k] = None
-        base_spec["filters"] = base_filters
-
-        df_den = _apply_filters(full_df, base_spec)
-        if df_den is None or df_den.empty or total_col not in df_den.columns:
-            spec["_share_debug"] = {"numerator": numerator, "denominator": 0.0}
-            return None, float("nan")
-
-        denominator = float(df_den[total_col].sum())
-        spec["_share_debug"] = {"numerator": numerator, "denominator": denominator}
-
-        if denominator == 0:
-            return None, float("nan")
-
-        share = numerator / denominator
-        return None, float(share)
 
 def _build_chart_block(
     group_df: pd.DataFrame,
@@ -3180,8 +3030,9 @@ def answer_question_from_df(
     # 6) Build the core textual answer by aggregation type
     # ------------------------------------------------------------------
     core_answer = ""
+# In answer_question_from_df(), find the COMPARE section and replace it with:
 
-# COMPARE - distributor/product comparison
+    # COMPARE - distributor/product comparison
     if aggregation == "compare":
         if group_df is None:
             core_answer = (
@@ -3216,24 +3067,14 @@ def answer_question_from_df(
                     f"Here is a **side-by-side comparison** for {status_text} for {filter_text}:\n\n"
                 )
             
-            # Manually build the markdown table
-            table_lines = []
-            table_lines.append("| Distributor | Total_mCi | Count | Average_mCi |")
-            table_lines.append("|---|---|---|---|")
+            # Use the pre-built markdown table from _run_aggregation
+            table_md = spec.get("_markdown_table", "")
             
-            for idx, row in group_df.iterrows():
-                distributor = str(row.get("Distributor", ""))
-                total_mci = int(row.get("Total_mCi", 0))
-                count = int(row.get("Count", 0))
-                avg_mci = int(row.get("Average_mCi", 0))
-                
-                table_lines.append(
-                    f"| {distributor} | {total_mci:,} | {count} | {avg_mci:,} |"
-                )
-            
-            table_md = "\n".join(table_lines)
-            core_answer = header + table_md
-
+            if table_md:
+                core_answer = header + table_md
+            else:
+                # Fallback: build it here if not in spec
+                core_answer = header + "Unable to generate table"
     # SUM (default), TOP N – same textual skeleton
     elif aggregation in ("sum_mci", "top_n"):
         if group_df is None:
