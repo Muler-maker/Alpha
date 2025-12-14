@@ -2857,7 +2857,6 @@ def _build_chart_block(
 # ============================================================================
 # PROJECTION VS ACTUAL AGGREGATION FUNCTION
 # ============================================================================
-
 def _run_projection_vs_actual_aggregation(
     base_df: pd.DataFrame,
     spec: Dict[str, Any],
@@ -2911,14 +2910,45 @@ def _run_projection_vs_actual_aggregation(
         else:
             return None, float(base_df[actual_col].sum())
     
+    # Check if projection column actually has non-zero data
+    proj_non_zero = (base_df[proj_col] > 0).sum()
+    print(f"  Projection column '{proj_col}' has {proj_non_zero} non-zero rows out of {len(base_df)}")
+    
+    if proj_non_zero == 0:
+        print(f"  ⚠️ WARNING: Projection column exists but is all zeros!")
+        print(f"    This likely means projections aren't available for this distributor/period")
+        print(f"    Returning actuals only")
+        
+        if not group_by:
+            return None, float(base_df[actual_col].sum())
+        
+        group_cols_filtered = [mapping.get(g) for g in group_by if mapping.get(g)]
+        if group_cols_filtered:
+            grouped = base_df.groupby(group_cols_filtered, as_index=False)[actual_col].sum()
+            grouped = grouped.rename(columns={actual_col: "Actual"})
+            return grouped, float(base_df[actual_col].sum())
+        else:
+            return None, float(base_df[actual_col].sum())
+    
     # Ensure numeric columns
     df = base_df.copy()
     df[actual_col] = pd.to_numeric(df[actual_col], errors="coerce").fillna(0.0)
     df[proj_col] = pd.to_numeric(df[proj_col], errors="coerce").fillna(0.0)
     
-    print(f"  After numeric conversion:")
-    print(f"    Actual sum: {df[actual_col].sum():.0f}")
-    print(f"    Projected sum: {df[proj_col].sum():.0f}")
+    print(f"  Checking projection data in base_df:")
+    print(f"    base_df shape: {base_df.shape}")
+    print(f"    base_df columns: {list(base_df.columns)}")
+    print(f"    Proj_Amount in columns: {'Proj_Amount' in base_df.columns}")
+    if 'Proj_Amount' in base_df.columns:
+        non_zero_proj = (base_df['Proj_Amount'] > 0).sum()
+        null_proj = base_df['Proj_Amount'].isna().sum()
+        zero_proj = (base_df['Proj_Amount'] == 0).sum()
+        print(f"    Proj_Amount non-zero rows: {non_zero_proj}")
+        print(f"    Proj_Amount null rows: {null_proj}")
+        print(f"    Proj_Amount zero rows: {zero_proj}")
+        print(f"    Proj_Amount sample values: {base_df['Proj_Amount'].dropna().head(10).tolist()}")
+        print(f"    Proj_Amount sum: {base_df['Proj_Amount'].sum():.0f}")
+    print(f"    Total_mCi sum: {base_df[actual_col].sum():.0f}")
     
     # Determine grouping columns
     group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
@@ -2994,7 +3024,6 @@ def _run_projection_vs_actual_aggregation(
     print(grouped.head(3))
     
     return grouped, total_actual
-
 # ============================================================================
 # UPDATE ANSWER SECTION IN answer_question_from_df()
 # ============================================================================
