@@ -332,12 +332,35 @@ def load_data_if_needed():
     if ss.data_loaded:
         return
 
-    with st.spinner(UI_TEXT["loading_data"]):
+    spinner_placeholder = st.empty()
+
+    spinner_placeholder.markdown(
+        """
+        <div style="
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 40vh;
+            font-size: 16px;
+            color: #4A2E88;
+        ">
+            <div>
+                ⏳ Loading latest data from Google Sheets…
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.spinner(""):
         raw_orders = load_orders()
         orders_df = preprocess_orders(raw_orders)
         proj_df = load_projection()
         meta_df = load_metadata()
         consolidated_df = build_consolidated_df(orders_df, proj_df, meta_df)
+
+    spinner_placeholder.empty()
+
 
     ss.orders_df = orders_df
     ss.proj_df = proj_df
