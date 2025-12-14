@@ -1875,7 +1875,7 @@ def _run_aggregation(
     # ===========================================================================
     if aggregation == "projection_vs_actual":
         print(f"\n[ROUTING] Detected projection_vs_actual - calling handler")
-        return _run_projection_vs_actual_aggregation(base_df, spec, mapping, total_col)
+        return _run_projection_vs_actual_aggregation(base_df, spec, mapping, total_col, full_df=full_df)
 
     # ===========================================================================
     # COMPARE MODE (entity or time comparison)
