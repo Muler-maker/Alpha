@@ -2938,125 +2938,144 @@ def _run_projection_vs_actual_aggregation(
     mapping: Dict[str, Optional[str]],
     total_col: str,
     full_df: Optional[pd.DataFrame] = None,
+    proj_df: Optional[pd.DataFrame] = None,
 ) -> Tuple[Optional[pd.DataFrame], float]:
     """
-    PROJECTION_VS_ACTUAL that supports all scenarios:
+    PROJECTION_VS_ACTUAL supporting all scenarios:
       1) projection + actual
-      2) neither projection nor actual  -> still show week with zeros
-      3) projection only                -> week shows Projected > 0, Actual = 0
-      4) actual only                    -> week shows Actual > 0, Projected = 0
+      2) neither projection nor actual  -> week appears with zeros
+      3) projection only                -> Projected > 0, Actual = 0
+      4) actual only                    -> Actual > 0, Projected = 0
 
-    Implementation:
-    - Build a week spine for the selected year (default 1..52).
-    - Aggregate Actuals from base_df (filtered order rows).
-    - Aggregate Projections from full_df when available (so projection-only weeks are included),
-      otherwise fall back to base_df projections if full_df not provided.
-    - Outer-join both onto the spine, fill missing with zeros.
+    IMPORTANT:
+    - Actuals are computed from base_df (orders).
+    - Projections are computed from proj_df (projection table) to avoid:
+        a) duplicated projection values per order row
+        b) missing projection-only weeks
     """
-    group_by = spec.get("group_by") or []
+
     actual_col = mapping.get("total_mci")
-    proj_col = mapping.get("proj_mci")
     year_col = mapping.get("year") or "Year"
     dist_col = mapping.get("distributor") or "Distributor"
-    week_col = mapping.get("week") or "Week"
+
+    # Which week should actuals be grouped by?
+    # In your model, actuals should generally align to "Week number for Activity vs Projection" if present.
+    actual_week_col = None
+    for cand in [
+        "Week number for Activity vs Projection",
+        mapping.get("week"),
+        "Week",
+    ]:
+        if cand and cand in base_df.columns:
+            actual_week_col = cand
+            break
 
     if not actual_col or actual_col not in base_df.columns:
         return None, float("nan")
+    if not actual_week_col:
+        return None, float(base_df[actual_col].sum())
 
-    # -----------------------------
-    # Resolve the slice (year + distributor) for projections from full_df
-    # -----------------------------
-    # Infer year + distributor from spec first, then from base_df as fallback
+    # Infer target year + distributor from spec or base_df
     target_year = spec.get("year")
+    if target_year is None and year_col in base_df.columns and base_df[year_col].notna().any():
+        target_year = int(pd.to_numeric(base_df[year_col], errors="coerce").dropna().iloc[0])
     if target_year is None:
-        if year_col in base_df.columns and base_df[year_col].notna().any():
-            target_year = int(pd.to_numeric(base_df[year_col], errors="coerce").dropna().iloc[0])
-        else:
-            return None, float("nan")
+        return None, float("nan")
 
     target_distributor = spec.get("distributor")
     if target_distributor is None and dist_col in base_df.columns and base_df[dist_col].notna().any():
         target_distributor = str(base_df[dist_col].dropna().iloc[0])
 
     # -----------------------------
-    # Decide which week field to use
-    # For projections, you typically want "Week number for Activity vs Projection"
-    # but your mapping.week should already reflect your intent.
+    # 1) Actuals by week (from orders)
     # -----------------------------
-    if week_col not in base_df.columns:
-        # last resort: try common names
-        for cand in ["Week number for Activity vs Projection", "Week", "ProjWeek"]:
-            if cand in base_df.columns:
-                week_col = cand
-                break
-    if week_col not in base_df.columns:
-        return None, float(base_df[actual_col].sum())
-
-    # Normalize numeric
     base = base_df.copy()
-    base[week_col] = pd.to_numeric(base[week_col], errors="coerce")
+    base[actual_week_col] = pd.to_numeric(base[actual_week_col], errors="coerce")
     base[actual_col] = pd.to_numeric(base[actual_col], errors="coerce").fillna(0.0)
 
-    # -----------------------------
-    # 1) Actuals by week (from base_df)
-    # -----------------------------
     actual_by_week = (
-        base.dropna(subset=[week_col])
-            .groupby(week_col, as_index=False)[actual_col]
+        base.dropna(subset=[actual_week_col])
+            .groupby(actual_week_col, as_index=False)[actual_col]
             .sum()
-            .rename(columns={week_col: "Week", actual_col: "Actual"})
+            .rename(columns={actual_week_col: "Week", actual_col: "Actual"})
     )
 
     # -----------------------------
-    # 2) Projections by week
-    # Prefer full_df (so projection-only weeks exist), fallback to base_df.
+    # 2) Projections by week (from proj_df)
     # -----------------------------
-    proj_source = None
-    if full_df is not None and isinstance(full_df, pd.DataFrame) and not full_df.empty and proj_col and proj_col in full_df.columns:
-        proj_source = full_df.copy()
-    else:
-        proj_source = base.copy()
+    proj_by_week = pd.DataFrame(columns=["Week", "Projected"])
 
-    # Ensure required cols exist in proj_source
-    if proj_col and proj_col in proj_source.columns and year_col in proj_source.columns:
-        proj_source[year_col] = pd.to_numeric(proj_source[year_col], errors="coerce")
-        # attempt to resolve week in proj_source
-        proj_week_col = week_col if week_col in proj_source.columns else None
-        if proj_week_col is None:
-            for cand in ["Week number for Activity vs Projection", "ProjWeek", "Week"]:
-                if cand in proj_source.columns:
-                    proj_week_col = cand
-                    break
+    if proj_df is not None and isinstance(proj_df, pd.DataFrame) and not proj_df.empty:
+        p = proj_df.copy()
 
-        if proj_week_col is None:
-            # no week dimension for projections
-            proj_by_week = pd.DataFrame(columns=["Week", "Projected"])
-        else:
-            proj_source[proj_week_col] = pd.to_numeric(proj_source[proj_week_col], errors="coerce")
-            proj_source[proj_col] = pd.to_numeric(proj_source[proj_col], errors="coerce")
+        # Identify required columns in projection table
+        # Week column in projection table is typically "Updated week number"
+        proj_week_src = None
+        for cand in ["Updated week number", "ProjWeek", "Week"]:
+            if cand in p.columns:
+                proj_week_src = cand
+                break
+        if proj_week_src is None:
+            proj_week_src = "Updated week number"  # will fail below with clear error if missing
 
-            # Filter to distributor+year if possible
-            if target_distributor is not None and dist_col in proj_source.columns:
-                # IMPORTANT: do not re-normalize if you already normalized upstream; just compare as strings
-                proj_source = proj_source[proj_source[dist_col].astype(str) == str(target_distributor)]
-            proj_source = proj_source[proj_source[year_col] == target_year]
+        # Distributor column name can vary
+        proj_dist_col = None
+        for cand in [
+            "Distributing company (from Company name)",
+            "Distributor",
+            "Distributing company",
+        ]:
+            if cand in p.columns:
+                proj_dist_col = cand
+                break
 
-            proj_by_week = (
-                proj_source.dropna(subset=[proj_week_col])
-                           .groupby(proj_week_col, as_index=False)[proj_col]
-                           .sum()
-                           .rename(columns={proj_week_col: "Week", proj_col: "Projected"})
-            )
-    else:
-        proj_by_week = pd.DataFrame(columns=["Week", "Projected"])
+        if "Year" not in p.columns:
+            raise ValueError("Projection table is missing 'Year'.")
+        if proj_week_src not in p.columns:
+            raise ValueError(f"Projection table is missing '{proj_week_src}'.")
+        if proj_dist_col is None:
+            raise ValueError("Projection table is missing distributor column.")
+        if "Amount" not in p.columns and "Proj_Amount" not in p.columns and "Projected" not in p.columns:
+            # Adjust this if your projection amount column has a different name
+            raise ValueError("Projection table is missing the projection amount column (expected 'Amount' or similar).")
+
+        # Choose projection amount column (adapt if your real column differs)
+        proj_amount_col = None
+        for cand in ["Amount", "Proj_Amount", "Projected", "mCi", "mCi projected"]:
+            if cand in p.columns:
+                proj_amount_col = cand
+                break
+        if proj_amount_col is None:
+            # last resort: try any numeric column named like it
+            raise ValueError("Could not locate projection amount column in projection table.")
+
+        # Filter to distributor/year
+        p["Year"] = pd.to_numeric(p["Year"], errors="coerce")
+        p[proj_week_src] = pd.to_numeric(p[proj_week_src], errors="coerce")
+        p[proj_amount_col] = pd.to_numeric(p[proj_amount_col], errors="coerce").fillna(0.0)
+
+        p = p.dropna(subset=["Year", proj_week_src, proj_dist_col])
+        p = p[p["Year"] == target_year]
+        if target_distributor is not None:
+            p = p[p[proj_dist_col].astype(str).str.strip() == str(target_distributor).strip()]
+
+        # OPTIONAL: if you want catalogue-aware projections, filter by the same catalogue as in base_df
+        # Only do this if you have catalogue in BOTH places and your intent is product-specific.
+        # Otherwise, skip catalogue to keep distributor-level projections.
+        # (Leaving as distributor-level by default.)
+
+        proj_by_week = (
+            p.groupby(proj_week_src, as_index=False)[proj_amount_col]
+             .sum()
+             .rename(columns={proj_week_src: "Week", proj_amount_col: "Projected"})
+        )
 
     # -----------------------------
-    # 3) Week spine (default 1..52)
-    # If you have week 53 in your data, extend automatically.
+    # 3) Week spine 1..52 (extend if needed)
     # -----------------------------
     max_week = 52
     for df_ in [actual_by_week, proj_by_week]:
-        if "Week" in df_.columns and not df_.empty:
+        if not df_.empty:
             wmax = int(pd.to_numeric(df_["Week"], errors="coerce").dropna().max())
             if wmax > max_week:
                 max_week = wmax
@@ -3064,9 +3083,13 @@ def _run_projection_vs_actual_aggregation(
     spine = pd.DataFrame({"Week": list(range(1, max_week + 1))})
 
     # -----------------------------
-    # 4) Combine spine + actuals + projections
+    # 4) Combine + compute variance
     # -----------------------------
-    out = spine.merge(actual_by_week, how="left", on="Week").merge(proj_by_week, how="left", on="Week")
+    out = (
+        spine.merge(actual_by_week, how="left", on="Week")
+             .merge(proj_by_week, how="left", on="Week")
+    )
+
     out["Actual"] = out["Actual"].fillna(0.0)
     out["Projected"] = out["Projected"].fillna(0.0)
 
@@ -3077,13 +3100,11 @@ def _run_projection_vs_actual_aggregation(
         axis=1
     ).round(1)
 
-    # Integer formatting for display stability
     for c in ["Actual", "Projected", "Variance"]:
         out[c] = out[c].round(0).astype(int)
 
     total_actual = float(out["Actual"].sum())
     return out, total_actual
-
 
 def _build_core_answer_projection_vs_actual(
     group_df: Optional[pd.DataFrame],
