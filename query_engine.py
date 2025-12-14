@@ -1901,21 +1901,13 @@ def _run_aggregation(
     overall_value = float(base_df[total_col].sum())
     return None, overall_value
 
-# ============================================================================
-# FIX #3: REPLACE ENTIRE _run_aggregation() FUNCTION
-# ============================================================================
-#
-# Location: In query_engine.py, find the _run_aggregation() function
-# Delete EVERYTHING from "def _run_aggregation(" through the end of that function
-# and PASTE THIS ENTIRE CODE:
-
 def _run_aggregation(
     df_filtered: pd.DataFrame,
     spec: Dict[str, Any],
     full_df: Optional[pd.DataFrame] = None,
 ) -> Tuple[Optional[pd.DataFrame], float]:
     """
-    Run the specified aggregation (sum, average, share_of_total, growth_rate, top_n, compare)
+    Run the specified aggregation (sum, average, share_of_total, growth_rate, top_n, compare, projection_vs_actual)
     on the filtered data.
     """
     if df_filtered is None or not isinstance(df_filtered, pd.DataFrame) or df_filtered.empty:
@@ -1939,6 +1931,13 @@ def _run_aggregation(
     print(f"  Aggregation: {aggregation}")
     print(f"  Group by: {group_by}")
     print(f"  Total col: {total_col}")
+
+    # ===========================================================================
+    # PROJECTION_VS_ACTUAL MODE - HANDLE FIRST
+    # ===========================================================================
+    if aggregation == "projection_vs_actual":
+        print(f"\n[ROUTING] Detected projection_vs_actual - calling handler")
+        return _run_projection_vs_actual_aggregation(base_df, spec, mapping, total_col)
 
     # ===========================================================================
     # COMPARE MODE (entity or time comparison)
@@ -2025,7 +2024,6 @@ def _run_aggregation(
     print(f"  ⚠️ Unknown aggregation type: {aggregation}")
     overall_value = float(base_df[total_col].sum())
     return None, overall_value
-
 
 # ===========================================================================
 # HELPER: COMPARE AGGREGATION
@@ -2968,6 +2966,10 @@ def _build_chart_block(
 # ADD THIS FUNCTION after _run_growth_rate_aggregation() 
 # (around line 1400-1500, before _build_chart_block())
 
+# ============================================================================
+# PROJECTION VS ACTUAL AGGREGATION FUNCTION
+# ============================================================================
+
 def _run_projection_vs_actual_aggregation(
     base_df: pd.DataFrame,
     spec: Dict[str, Any],
@@ -2978,57 +2980,75 @@ def _run_projection_vs_actual_aggregation(
     Execute PROJECTION_VS_ACTUAL aggregation.
     
     Compares projected amounts (from Proj_Amount column) vs actual amounts (Total_mCi).
-    Groups by Week by default.
+    Groups by Week by default, or whatever is in group_by.
+    
+    Returns a DataFrame with columns:
+      - [grouping column(s)] e.g., Week
+      - Actual (sum of Total_mCi)
+      - Projected (sum of Proj_Amount)
+      - Variance (Actual - Projected)
+      - Variance_% (percentage difference)
     """
     group_by = spec.get("group_by") or []
     
     print(f"\n[PROJECTION_VS_ACTUAL]")
     print(f"  base_df.shape: {base_df.shape}")
+    print(f"  base_df.columns: {list(base_df.columns)[:15]}")
     print(f"  group_by: {group_by}")
     
     # Check for required columns
     actual_col = mapping.get("total_mci")
     proj_col = mapping.get("proj_mci")
     
+    print(f"  actual_col from mapping: '{actual_col}'")
+    print(f"  proj_col from mapping: '{proj_col}'")
+    
     if not actual_col or actual_col not in base_df.columns:
-        print(f"  âŒ ERROR: actual_col '{actual_col}' not in base_df.columns")
+        print(f"  ❌ ERROR: actual_col '{actual_col}' not in base_df.columns")
         return None, float("nan")
     
     if not proj_col or proj_col not in base_df.columns:
-        print(f"  âŒ WARNING: proj_col '{proj_col}' not in base_df.columns")
+        print(f"  ⚠️ WARNING: proj_col '{proj_col}' not in base_df.columns")
         print(f"     Available columns: {list(base_df.columns)}")
-        # If no projection column, just return actuals
+        # Fallback: return actuals only
         if not group_by:
             return None, float(base_df[actual_col].sum())
-        grouped = base_df.groupby(
-            [mapping.get(g) for g in group_by if mapping.get(g)],
-            as_index=False
-        )[actual_col].sum()
-        return grouped, float(base_df[actual_col].sum())
+        
+        # Group by whatever was specified
+        group_cols_filtered = [mapping.get(g) for g in group_by if mapping.get(g)]
+        if group_cols_filtered:
+            grouped = base_df.groupby(group_cols_filtered, as_index=False)[actual_col].sum()
+            grouped = grouped.rename(columns={actual_col: "Actual"})
+            return grouped, float(base_df[actual_col].sum())
+        else:
+            return None, float(base_df[actual_col].sum())
     
     # Ensure numeric columns
     df = base_df.copy()
     df[actual_col] = pd.to_numeric(df[actual_col], errors="coerce").fillna(0.0)
     df[proj_col] = pd.to_numeric(df[proj_col], errors="coerce").fillna(0.0)
     
-    # Determine grouping columns (default to Week if present and not in group_by)
+    print(f"  After numeric conversion:")
+    print(f"    Actual sum: {df[actual_col].sum():.0f}")
+    print(f"    Projected sum: {df[proj_col].sum():.0f}")
+    
+    # Determine grouping columns
     group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
     
     if not group_cols:
-        # Default: group by Week
+        # Default: group by Week if available
         week_col = mapping.get("week")
         if week_col and week_col in df.columns:
             group_cols = [week_col]
-            print(f"  âž¡ï¸ No group_by specified, defaulting to Week")
+            print(f"  ℹ️ No group_by specified, defaulting to Week")
         else:
-            # No week column, just compare totals
-            print(f"  âž¡ï¸ No time dimension, returning scalar comparison")
+            # No week column, return scalar comparison
+            print(f"  ℹ️ No time dimension, returning scalar comparison")
             actual_total = float(df[actual_col].sum())
             proj_total = float(df[proj_col].sum())
             variance = actual_total - proj_total
             variance_pct = (variance / proj_total * 100.0) if proj_total != 0 else 0.0
             
-            # Return a single-row summary
             summary = pd.DataFrame([{
                 "Actual": int(round(actual_total)),
                 "Projected": int(round(proj_total)),
@@ -3038,12 +3058,16 @@ def _run_projection_vs_actual_aggregation(
             return summary, actual_total
     
     print(f"  group_cols: {group_cols}")
+    print(f"  Grouping by: {[c for c in group_cols]}")
     
     # Group by time/entity dimension and sum actuals and projections
     grouped = df.groupby(group_cols, as_index=False).agg({
         actual_col: "sum",
         proj_col: "sum"
-    }).reset_index(drop=True)
+    })
+    
+    print(f"  After groupby: shape={grouped.shape}")
+    print(f"  Grouped columns before rename: {list(grouped.columns)}")
     
     # Rename columns for clarity
     grouped = grouped.rename(columns={
@@ -3051,7 +3075,9 @@ def _run_projection_vs_actual_aggregation(
         proj_col: "Projected"
     })
     
-    # Calculate variance
+    print(f"  After rename: columns={list(grouped.columns)}")
+    
+    # Calculate variance and variance percentage
     grouped["Variance"] = grouped["Actual"] - grouped["Projected"]
     grouped["Variance_%"] = (
         (grouped["Variance"] / grouped["Projected"] * 100.0)
@@ -3059,108 +3085,24 @@ def _run_projection_vs_actual_aggregation(
         .round(1)
     )
     
-    # Format numeric columns
+    # Format numeric columns as integers (except percentages)
     for col in ["Actual", "Projected", "Variance"]:
         grouped[col] = grouped[col].round(0).astype(int)
     
-    # Sort by first group column, then by time if present
+    # Sort by first group column (usually Week)
     if len(group_cols) > 0:
         grouped = grouped.sort_values(group_cols)
     
     total_actual = float(grouped["Actual"].sum())
     
-    print(f"  âœ… Result shape: {grouped.shape}")
+    print(f"  ✅ Result shape: {grouped.shape}")
+    print(f"  Final columns: {list(grouped.columns)}")
     print(f"  Total Actual: {total_actual:.0f}")
+    print(f"  First few rows:")
+    print(grouped.head(3))
     
     return grouped, total_actual
 
-
-# ============================================================================
-# ALSO UPDATE _run_aggregation() TO ROUTE TO PROJECTION_VS_ACTUAL
-# ============================================================================
-# Find the _run_aggregation() function and add this BEFORE the "== compare" check:
-
-    # ===========================================================================
-    # PROJECTION_VS_ACTUAL MODE
-    # ===========================================================================
-    if aggregation == "projection_vs_actual":
-        return _run_projection_vs_actual_aggregation(base_df, spec, mapping, total_col)
-
-
-# ============================================================================
-# ALSO ADD THIS TO answer_question_from_df() IN THE CORE_ANSWER SECTION
-# ============================================================================
-# Find the big elif/if chain that builds core_answer (around line 1950)
-# and add this BEFORE the "elif aggregation == 'growth_rate'" line:
-
-    # PROJECTION VS ACTUAL
-    elif aggregation == "projection_vs_actual":
-        if group_df is None:
-            core_answer = (
-                f"Based on {status_text} for {filter_text}, "
-                f"the actual ordered amount is **{numeric_value:,.0f} mCi**."
-            )
-        else:
-            preview_md = group_df.to_markdown(index=False)
-            
-            # Extract total actual and projected if available
-            if "Actual" in group_df.columns:
-                total_actual = group_df["Actual"].sum()
-                total_projected = group_df["Projected"].sum() if "Projected" in group_df.columns else 0
-                total_variance = total_actual - total_projected
-                variance_pct = (total_variance / total_projected * 100.0) if total_projected != 0 else 0.0
-                
-                header = (
-                    f"Here is the **weekly actual vs projected** for {filter_text} "
-                    f"({status_text}):\n\n"
-                    f"- **Total Actual:** {total_actual:,.0f} mCi\n"
-                    f"- **Total Projected:** {total_projected:,.0f} mCi\n"
-                    f"- **Variance:** {total_variance:+,.0f} mCi ({variance_pct:+.1f}%)\n\n"
-                )
-            else:
-                header = (
-                    f"Here is the **actual vs projected breakdown** for {filter_text} "
-                    f"({status_text}):\n\n"
-                )
-            
-            core_answer = header + preview_md
-
-
-# ============================================================================
-# FIX THE INTERPRETATION LAYER TO BETTER DETECT PROJECTION_VS_ACTUAL
-# ============================================================================
-# In _interpret_question_with_llm(), find the section that says:
-#   "# Projection vs actual questions"
-# 
-# Replace that section with:
-
-    # --- PROJECTION VS ACTUAL DETECTION (CRITICAL FIX) ---
-    has_projection = any(kw in q_lower for kw in [
-        "projection", "projections", "projected", "forecast", "forecasted",
-        "budget", "budgeted", "plan", "planned", "estimate", "expected"
-    ])
-    
-    has_actual = any(kw in q_lower for kw in [
-        "actual", "actuals", "realized", "real", "executed", "delivered",
-        "vs", "versus", "compared to", "compare", "vs.", "v.", "against"
-    ])
-    
-    if has_projection and has_actual:
-        print(f"🔴 FORCING projection_vs_actual aggregation")
-        spec["aggregation"] = "projection_vs_actual"
-        
-        # Ensure we group by week if not already
-        gb = spec.get("group_by") or []
-        if not isinstance(gb, list):
-            gb = []
-        
-        if "week" not in gb:
-            gb.insert(0, "week")
-            spec["group_by"] = gb
-            print(f"  Added 'week' to group_by")
-        
-        spec["_question_text"] = question
-        return spec
 # --------------------------------------------------------------------
 # 3) PUBLIC ENTRYPOINT – called from app.py
 # --------------------------------------------------------------------
