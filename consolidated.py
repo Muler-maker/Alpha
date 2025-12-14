@@ -186,7 +186,6 @@ def build_consolidated_df(
             exclude=["Year", "ProjWeek", "Distributor", "Catalogue description (sold as)"],
         )
 
-        )
 
         if "Week number for Activity vs Projection" not in merged.columns:
             raise ValueError(
