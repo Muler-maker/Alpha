@@ -3,6 +3,7 @@ import json
 import re
 import copy
 import ast
+import unicodedata
 from typing import Dict, Any, List, Optional, Tuple
 
 import pandas as pd
@@ -10,6 +11,24 @@ import streamlit as st      # ← ADD THIS
 from dotenv import load_dotenv
 from openai import OpenAI
 from tabulate import tabulate
+
+
+
+def _normalize_text(val) -> str:
+    """
+    Normalize text for matching:
+    - lowercase
+    - strip accents/diacritics
+    - collapse whitespace
+    """
+    if val is None:
+        return ""
+    text = str(val)
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    text = text.lower()
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 def _norm_key(series: pd.Series) -> pd.Series:
     """
