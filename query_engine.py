@@ -22,7 +22,45 @@ def _norm_key(series: pd.Series) -> pd.Series:
         .str.replace(r"\s+", " ", regex=True)
         .str.upper()
     )
+import datetime as _dt
 
+def _iso_week_to_date(year: int, week: int, weekday: int = 1) -> _dt.date:
+    """
+    Return a date for ISO year/week/weekday.
+    weekday: 1=Mon .. 7=Sun
+    """
+    # Python's fromisocalendar uses ISO week rules (recommended)
+    return _dt.date.fromisocalendar(int(year), int(week), int(weekday))
+
+def _ensure_period_columns(df: pd.DataFrame, year_col: str, week_col: str) -> pd.DataFrame:
+    """
+    Adds:
+      - _WeekDate (Monday of ISO week)
+      - Month (1-12)
+      - Quarter (1-4)
+      - YearMonth (e.g., 2025-02)
+      - YearQuarter (e.g., 2025-Q1)
+    """
+    out = df.copy()
+
+    out[year_col] = pd.to_numeric(out[year_col], errors="coerce")
+    out[week_col] = pd.to_numeric(out[week_col], errors="coerce")
+    out = out.dropna(subset=[year_col, week_col])
+    out[year_col] = out[year_col].astype(int)
+    out[week_col] = out[week_col].astype(int)
+
+    # ISO week Monday date
+    out["_WeekDate"] = [
+        _iso_week_to_date(y, w, 1) for y, w in zip(out[year_col].tolist(), out[week_col].tolist())
+    ]
+
+    out["Month"] = [d.month for d in out["_WeekDate"]]
+    out["Quarter"] = [((d.month - 1) // 3) + 1 for d in out["_WeekDate"]]
+
+    out["YearMonth"] = [f"{d.year:04d}-{d.month:02d}" for d in out["_WeekDate"]]
+    out["YearQuarter"] = [f"{d.year:04d}-Q{((d.month - 1)//3)+1}" for d in out["_WeekDate"]]
+
+    return out
 
 # --- Environment & OpenAI client ---
 
@@ -2671,84 +2709,109 @@ def _run_growth_rate_aggregation(
     group_cols: List[str],
 ) -> Tuple[Optional[pd.DataFrame], float]:
     """
-    Execute GROWTH RATE aggregation.
-    Routes to WoW or YoY depending on group_by and time_window.
+    Growth rate over time. Supports:
+      - Weekly (default)
+      - Monthly (YearMonth)
+      - Quarterly (YearQuarter)
+
+    Output columns:
+      Period | Actual | Prev_Actual | Growth_%
     """
-    group_by = spec.get("group_by") or []
-    time_window = spec.get("time_window") or {}
-    compare = spec.get("compare") or {}
+    if base_df is None or base_df.empty:
+        return None, float("nan")
 
-    print(f"\n[GROWTH_RATE]")
-    print(f"  time_window.mode: {time_window.get('mode')}")
-    print(f"  compare.entities: {compare.get('entities')}")
-    print(f"  compare.entity_type: {compare.get('entity_type')}")
-    print(f"  group_by: {group_by}")
+    df = base_df.copy()
 
-    entities = compare.get("entities")
-    if entities is None:
-        entities = []
-    entity_type = compare.get("entity_type")
+    actual_col = mapping.get("total_mci") or total_col
+    if not actual_col or actual_col not in df.columns:
+        return None, float("nan")
 
-    # =========================================================================
-    # STEP 1: Filter by specific entities if comparing
-    # =========================================================================
-    if entities and entity_type:
-        entity_col = mapping.get(entity_type)
-        print(f"  Filtering by entities: {entities}")
+    df[actual_col] = pd.to_numeric(df[actual_col], errors="coerce").fillna(0.0)
 
-        if entity_col and entity_col in base_df.columns:
-            mask = None
-            for ent in entities:
-                cur = base_df[entity_col].astype(str).str.contains(
-                    str(ent), case=False, na=False, regex=False
-                )
-                if mask is None:
-                    mask = cur
-                else:
-                    mask = mask | cur
-
-            if mask is not None:
-                base_df = base_df[mask]
-                print(f"  After entity filtering: {len(base_df)} rows")
-
-    # =========================================================================
-    # STEP 2: Determine growth type (WoW vs YoY)
-    # =========================================================================
-
-    # Case 1: Dynamic week window → WoW
-    if time_window.get("mode") in ("last_n_weeks", "anchored_last_n_weeks"):
-        week_col = mapping.get("week")
-        if week_col and week_col in base_df.columns:
-            print(f"  → Case 1: Dynamic week window (WoW)")
-            group_df, overall_val = _calculate_wow_growth(
-                base_df, spec, group_cols, week_col, total_col
-            )
-            return group_df, overall_val
-
-    # Case 2: Explicit weekly grouping → WoW
+    # Identify year/week columns
+    year_col = "Year" if "Year" in df.columns else mapping.get("year")
     week_col = mapping.get("week")
-    if "week" in group_by and week_col and week_col in base_df.columns:
-        print(f"  → Case 2: Week in group_by (WoW)")
-        group_df, overall_val = _calculate_wow_growth(
-            base_df, spec, group_cols, week_col, total_col
-        )
-        # Pivot by entity if comparing
-        if entities and entity_type:
-            group_df = _pivot_growth_by_entity(group_df, spec)
-        return group_df, overall_val
 
-    # Case 3: Year-over-year grouping → YoY
-    year_col = mapping.get("year")
-    if "year" in group_by and year_col and year_col in base_df.columns:
-        print(f"  → Case 3: Year in group_by (YoY)")
-        group_df, overall_val = _calculate_yoy_growth(
-            base_df, spec, group_cols, year_col, total_col
-        )
-        return group_df, overall_val
+    # If your mapping uses the production week field name, week_col will point to it.
+    # Otherwise fallback to the common column name you use elsewhere.
+    if not week_col or week_col not in df.columns:
+        if "Week number for Activity vs Projection" in df.columns:
+            week_col = "Week number for Activity vs Projection"
 
-    # Fallback: cannot compute growth
-    print(f"  ⚠️ No growth calculation possible")
-    return None, float("nan")
+    # Determine requested period from group_by
+    group_by = [str(x).lower() for x in (spec.get("group_by") or [])]
+    wants_month = any(x in ["month", "monthly"] for x in group_by)
+    wants_quarter = any(x in ["quarter", "quarterly", "q"] for x in group_by)
+
+    # Default is weekly unless month/quarter explicitly requested
+    period_mode = "week"
+    if wants_month:
+        period_mode = "month"
+    elif wants_quarter:
+        period_mode = "quarter"
+
+    # Derive period columns if needed
+    if period_mode in ["month", "quarter"]:
+        if not year_col or year_col not in df.columns or not week_col or week_col not in df.columns:
+            # Cannot derive month/quarter without year+week
+            return None, float("nan")
+        df = _ensure_period_columns(df, year_col=year_col, week_col=week_col)
+
+    # Choose the period column
+    if period_mode == "week":
+        # Use explicit group col if provided; else default to week column
+        period_col = group_cols[0] if group_cols else week_col
+        if not period_col or period_col not in df.columns:
+            return None, float("nan")
+        period_label = "Week"
+    elif period_mode == "month":
+        period_col = "YearMonth"
+        period_label = "Month"
+    else:  # quarter
+        period_col = "YearQuarter"
+        period_label = "Quarter"
+
+    # Aggregate
+    series = (
+        df.groupby(period_col, as_index=False)[actual_col]
+          .sum()
+          .rename(columns={actual_col: "Actual", period_col: period_label})
+    )
+
+    # Sort periods properly
+    if period_mode == "week":
+        series[period_label] = pd.to_numeric(series[period_label], errors="coerce")
+        series = series.dropna(subset=[period_label]).sort_values(period_label)
+        series[period_label] = series[period_label].astype(int)
+    elif period_mode == "month":
+        # YYYY-MM sorts lexicographically correctly
+        series = series.sort_values(period_label)
+    else:
+        # YYYY-Qn sorts lexicographically correctly if format is consistent
+        series = series.sort_values(period_label)
+
+    if len(series) < 2:
+        return None, float("nan")
+
+    series["Prev_Actual"] = series["Actual"].shift(1)
+
+    def _growth(curr, prev):
+        if pd.isna(prev) or prev == 0:
+            return float("inf") if curr > 0 else 0.0
+        return (curr - prev) / prev * 100.0
+
+    series["Growth_%"] = [
+        _growth(c, p) for c, p in zip(series["Actual"].tolist(), series["Prev_Actual"].tolist())
+    ]
+    series["Growth_%"] = pd.to_numeric(series["Growth_%"], errors="coerce").round(1)
+
+    # Format numeric columns
+    series["Actual"] = series["Actual"].round(0).astype(int)
+    series["Prev_Actual"] = series["Prev_Actual"].fillna(0).round(0).astype(int)
+
+    total_actual = float(series["Actual"].sum())
+    return series, total_actual
+
 def _build_chart_block(
     group_df: pd.DataFrame,
     spec: Dict[str, Any],
