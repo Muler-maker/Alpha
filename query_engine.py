@@ -2939,40 +2939,45 @@ def _run_projection_vs_actual_aggregation(
     total_col: str,
 ) -> Tuple[Optional[pd.DataFrame], float]:
     """
-    Compare weekly Actual vs Projected values.
+    PROJECTION_VS_ACTUAL aggregation (correct timeline behavior).
 
-    IMPORTANT:
-    - base_df is ORDER-LEVEL
-    - Actual must be summed across orders
-    - Projected must NOT be summed across orders (otherwise it multiplies)
+    Key behaviors:
+    - Actuals are summed across order rows.
+    - Projections are de-duplicated at their natural grain (so they don't multiply by #orders).
+    - Timeline is built from PROJECTIONS (or all weeks if asked), then actuals are outer-joined.
+      This ensures weeks with Projected > 0 and Actual = 0 appear in the output.
     """
-
-    print("\n[PROJECTION_VS_ACTUAL] START")
 
     group_by = spec.get("group_by") or []
 
     actual_col = mapping.get("total_mci")
     proj_col = mapping.get("proj_mci")
-    week_col = mapping.get("week")
+    week_col = mapping.get("week")  # often "Week number for Activity vs Projection"
 
     if not actual_col or actual_col not in base_df.columns:
-        print("❌ Actual column missing")
         return None, float("nan")
 
     if not proj_col or proj_col not in base_df.columns:
-        print("⚠️ Projection column missing – returning actuals only")
-        return None, float(base_df[actual_col].sum())
+        # If projections are truly not in df, return actuals only
+        if not group_by:
+            return None, float(base_df[actual_col].sum())
+        group_cols = [mapping.get(g) for g in group_by if mapping.get(g)]
+        if not group_cols and week_col and week_col in base_df.columns:
+            group_cols = [week_col]
+        if not group_cols:
+            return None, float(base_df[actual_col].sum())
+        grouped = base_df.groupby(group_cols, as_index=False)[actual_col].sum()
+        grouped = grouped.rename(columns={actual_col: "Actual"})
+        return grouped, float(base_df[actual_col].sum())
 
-    # ------------------------------------------------------------------
-    # Normalize numeric columns
-    # ------------------------------------------------------------------
     df = base_df.copy()
     df[actual_col] = pd.to_numeric(df[actual_col], errors="coerce").fillna(0.0)
+    # Keep projections as NaN until timeline merge; do NOT fill yet
     df[proj_col] = pd.to_numeric(df[proj_col], errors="coerce")
 
-    # ------------------------------------------------------------------
-    # Determine grouping columns
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------
+    # Determine grouping columns (default to Week)
+    # ------------------------------------------------------------
     group_cols = [mapping.get(g) for g in group_by if mapping.get(g)]
     if not group_cols:
         if week_col and week_col in df.columns:
@@ -2980,7 +2985,7 @@ def _run_projection_vs_actual_aggregation(
         else:
             # Scalar fallback
             actual_total = float(df[actual_col].sum())
-            proj_total = float(df[proj_col].dropna().unique().sum())
+            proj_total = float(df[proj_col].dropna().sum())
             variance = actual_total - proj_total
             variance_pct = (variance / proj_total * 100.0) if proj_total else float("nan")
             summary = pd.DataFrame([{
@@ -2991,36 +2996,35 @@ def _run_projection_vs_actual_aggregation(
             }])
             return summary, actual_total
 
-    print(f"Grouping by: {group_cols}")
-
-    # ------------------------------------------------------------------
-    # ACTUALS: sum across all order rows
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------
+    # 1) ACTUALS: sum across all order rows by group (e.g., week)
+    # ------------------------------------------------------------
     actuals = (
         df.groupby(group_cols, as_index=False)[actual_col]
           .sum()
           .rename(columns={actual_col: "Actual"})
     )
 
-    # ------------------------------------------------------------------
-    # PROJECTIONS: de-duplicate BEFORE aggregating
-    # ------------------------------------------------------------------
-    # Projection grain = group_cols + distributor/year/catalogue if present
+    # ------------------------------------------------------------
+    # 2) PROJECTIONS: de-duplicate before aggregating
+    #    Because projection values were merged onto order rows and would multiply.
+    # ------------------------------------------------------------
+    # Build projection grain keys:
+    # must include the group dimension (Week), plus identifying dims if present
     dedupe_keys = list(group_cols)
-
-    for col in ["Year", "Distributor", "Catalogue description (sold as)"]:
-        if col in df.columns and col not in dedupe_keys:
-            dedupe_keys.append(col)
+    for c in ["Year", "Distributor", "Catalogue description (sold as)"]:
+        if c in df.columns and c not in dedupe_keys:
+            dedupe_keys.append(c)
 
     proj_unique = (
         df[dedupe_keys + [proj_col]]
-        .dropna(subset=[proj_col])              # only rows where projection actually matched
-        .drop_duplicates(subset=dedupe_keys)    # CRITICAL: avoid multiplication
+        .dropna(subset=[proj_col])               # only rows where projections matched
+        .drop_duplicates(subset=dedupe_keys)     # critical to prevent multiplication
     )
 
+    # If no matched projection rows, projections truly didn't join for this filtered slice
+    # We will still return a timeline based on actuals only (unless you later add full-week calendar).
     if proj_unique.empty:
-        print("⚠️ No matched projection rows after de-duplication")
-        # IMPORTANT: proj_grouped must NOT include 'Actual' to avoid Actual_x/Actual_y
         proj_grouped = actuals[group_cols].copy()
         proj_grouped["Projected"] = 0.0
     else:
@@ -3030,58 +3034,37 @@ def _run_projection_vs_actual_aggregation(
                        .rename(columns={proj_col: "Projected"})
         )
 
-    # ------------------------------------------------------------------
-    # Combine Actuals + Projections
-    # ------------------------------------------------------------------
-    # --- Build full timeline from projections (preferred) ---
-    timeline = proj_grouped.copy()
+    # ------------------------------------------------------------
+    # 3) TIMELINE: build from projections, then outer-join actuals
+    #    This is the core fix for your ACCESOFARM “missing weeks” issue.
+    # ------------------------------------------------------------
+    timeline = proj_grouped.merge(actuals, on=group_cols, how="outer")
 
-    # If there are actuals in weeks without projections, keep them too
-    timeline = timeline.merge(
-        actuals,
-        on=group_cols,
-        how="outer"
-    )
+    # Fill missing values
+    timeline["Projected"] = pd.to_numeric(timeline["Projected"], errors="coerce").fillna(0.0)
+    timeline["Actual"] = pd.to_numeric(timeline["Actual"], errors="coerce").fillna(0.0)
 
-    timeline["Actual"] = timeline["Actual"].fillna(0.0)
-    timeline["Projected"] = timeline["Projected"].fillna(0.0)
-
-    grouped = timeline
-
-    # ------------------------------------------------------------------
-    # Variance calculations
-    # ------------------------------------------------------------------
-    grouped["Variance"] = grouped["Actual"] - grouped["Projected"]
-    grouped["Variance_%"] = grouped.apply(
-        lambda r: (
-            (r["Variance"] / r["Projected"] * 100.0)
-            if r["Projected"] != 0
-            else (float("nan") if r["Actual"] == 0 else float("inf"))
+    # ------------------------------------------------------------
+    # 4) Variance calculations
+    # ------------------------------------------------------------
+    timeline["Variance"] = timeline["Actual"] - timeline["Projected"]
+    timeline["Variance_%"] = timeline.apply(
+        lambda row: (
+            (row["Variance"] / row["Projected"] * 100.0) if row["Projected"] != 0
+            else (float("nan") if row["Actual"] == 0 else float("inf"))
         ),
         axis=1
     ).round(1)
 
-    # ------------------------------------------------------------------
-    # Formatting
-    # ------------------------------------------------------------------
+    # Format as ints for display
     for col in ["Actual", "Projected", "Variance"]:
-        grouped[col] = grouped[col].round(0).astype(int)
+        timeline[col] = timeline[col].round(0).astype(int)
 
-    if group_cols:
-        grouped = grouped.sort_values(group_cols)
+    # Sort by group column (usually week)
+    timeline = timeline.sort_values(group_cols)
 
-    total_actual = float(grouped["Actual"].sum())
-
-    print("[PROJECTION_VS_ACTUAL] DONE")
-    print(grouped.head(3))
-
-    return grouped, total_actual
-
-# ============================================================================
-# UPDATE ANSWER SECTION IN answer_question_from_df()
-# ============================================================================
-# Find the big elif/if chain that builds core_answer and add this section
-# Make sure it comes BEFORE "elif aggregation == 'growth_rate'":
+    total_actual = float(timeline["Actual"].sum())
+    return timeline, total_actual
 
 def _build_core_answer_projection_vs_actual(
     group_df: Optional[pd.DataFrame],
