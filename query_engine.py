@@ -2430,11 +2430,14 @@ def _run_growth_rate_aggregation(
     """
     Growth rate over time. Supports:
       - Weekly (default)
-      - Monthly (YearMonth)
-      - Quarterly (YearQuarter)
+      - Monthly (uses Month/YearMonth if available; else derives from Year+Week)
+      - Quarterly (uses Quarter/YearQuarter if available; else derives from Year+Week)
+
+    Also supports "per X" (e.g., per customer) by computing the time series
+    separately for each non-time grouping column.
 
     Output columns:
-      Period | Actual | Prev_Actual | Growth_%
+      [Entity cols...] | Period | Actual | Prev_Actual | Growth_%
     """
     if base_df is None or base_df.empty:
         return None, float("nan")
@@ -2444,120 +2447,155 @@ def _run_growth_rate_aggregation(
     actual_col = mapping.get("total_mci") or total_col
     if not actual_col or actual_col not in df.columns:
         return None, float("nan")
-
     df[actual_col] = pd.to_numeric(df[actual_col], errors="coerce").fillna(0.0)
 
+    # ----------------------------
     # Identify year/week columns
-    year_col = "Year" if "Year" in df.columns else mapping.get("year")
-    week_col = mapping.get("week")
+    # ----------------------------
+    year_col = None
+    for cand in ["Year", mapping.get("year")]:
+        if cand and cand in df.columns:
+            year_col = cand
+            break
 
-    # If your mapping uses the production week field name, week_col will point to it.
-    # Otherwise fallback to the common column name you use elsewhere.
+    week_col = mapping.get("week")
     if not week_col or week_col not in df.columns:
         if "Week number for Activity vs Projection" in df.columns:
             week_col = "Week number for Activity vs Projection"
 
-    # Determine requested period from group_by
+    # ----------------------------
+    # Determine requested period
+    # ----------------------------
     group_by = [str(x).lower() for x in (spec.get("group_by") or [])]
     wants_month = any(x in ["month", "monthly"] for x in group_by)
     wants_quarter = any(x in ["quarter", "quarterly", "q"] for x in group_by)
 
-    # Default is weekly unless month/quarter explicitly requested
     period_mode = "week"
     if wants_month:
         period_mode = "month"
     elif wants_quarter:
         period_mode = "quarter"
 
-    # ---------------------------------------------------------------------
-    # Prefer explicit Month/Quarter columns if they already exist in df
-    # ---------------------------------------------------------------------
-    quarter_col = None
-    for cand in ["Quarter", "quarter", mapping.get("quarter"), "YearQuarter"]:
-        if cand and cand in df.columns:
-            quarter_col = cand
-            break
+    # ----------------------------
+    # Helpers
+    # ----------------------------
+    def _find_col_case_insensitive(df_: pd.DataFrame, candidates: List[Optional[str]]) -> Optional[str]:
+        lookup = {c.lower(): c for c in df_.columns}
+        for c in candidates:
+            if not c:
+                continue
+            key = str(c).strip().lower()
+            if key in lookup:
+                return lookup[key]
+        return None
 
-    month_col = None
-    for cand in ["Month", "month", mapping.get("month"), "YearMonth"]:
-        if cand and cand in df.columns:
-            month_col = cand
-            break
+    def _normalize_year_quarter_strings(s: pd.Series) -> pd.Series:
+        """
+        Normalize quarter strings to 'YYYY-Qn' when possible.
+        Accepts: '2025-Q1', '2025 Q1', '2025Q1', 'Q1' (requires Year col).
+        """
+        raw = s.astype(str).str.strip().str.upper()
+        raw = raw.replace({"NAN": "", "NONE": ""})
 
-    # Choose the period column (prefer explicit columns, fallback to deriving)
+        # 'YYYY-Qn' already
+        already = raw.str.match(r"^\d{4}\s*-\s*Q[1-4]$", na=False)
+        if already.any():
+            return raw.str.replace(r"\s*", "", regex=True)
+
+        # 'YYYYQn' or 'YYYY Qn' or 'YYYY-Qn'
+        m = raw.str.extract(r"^(?P<y>\d{4})\s*[- ]?\s*(?P<q>Q[1-4])$", expand=True)
+        out = pd.Series([""] * len(raw), index=raw.index, dtype="object")
+        good = m["y"].notna() & m["q"].notna()
+        out.loc[good] = m.loc[good, "y"].astype(str) + "-" + m.loc[good, "q"].astype(str)
+
+        # 'Qn' only → prefix from Year col if available
+        q_only = raw.str.match(r"^Q[1-4]$", na=False)
+        if q_only.any() and year_col and year_col in df.columns:
+            out.loc[q_only] = df.loc[q_only, year_col].astype(str).str.strip() + "-" + raw.loc[q_only]
+
+        # keep original where we couldn't parse (but not empty)
+        still_empty = (out == "") & (raw != "")
+        out.loc[still_empty] = raw.loc[still_empty]
+
+        return out
+
+    # ----------------------------
+    # Prefer explicit Month/Quarter cols
+    # ----------------------------
+    quarter_col = _find_col_case_insensitive(df, ["Quarter", "YearQuarter", mapping.get("quarter")])
+    month_col = _find_col_case_insensitive(df, ["Month", "YearMonth", mapping.get("month")])
+
+    # ----------------------------
+    # Select / derive period column
+    # ----------------------------
     if period_mode == "week":
-        period_col = group_cols[0] if group_cols else week_col
+        period_col = week_col
+        period_label = "Week"
+        if group_cols:
+            # If user explicitly grouped by a week column, respect it
+            if group_cols[0] in df.columns:
+                period_col = group_cols[0]
         if not period_col or period_col not in df.columns:
             return None, float("nan")
-        period_label = "Week"
 
     elif period_mode == "month":
+        period_label = "Month"
         if month_col:
             period_col = month_col
-            period_label = "Month"
         else:
             if not year_col or year_col not in df.columns or not week_col or week_col not in df.columns:
                 return None, float("nan")
             df = _ensure_period_columns(df, year_col=year_col, week_col=week_col)
             period_col = "YearMonth"
-            period_label = "Month"
 
     else:  # quarter
+        period_label = "Quarter"
         if quarter_col:
             period_col = quarter_col
-            period_label = "Quarter"
-
-            # If Quarter is "Q1/Q2/..." (no year), prefix with Year → "YYYY-Qn"
-            if df[period_col].dtype == object:
-                sample = (
-                    df[period_col]
-                    .dropna()
-                    .astype(str)
-                    .head(20)
-                    .tolist()
-                )
-                looks_like_q_only = (
-                    any(s.strip().upper().startswith("Q") for s in sample)
-                    and not any("-" in s for s in sample)
-                )
-                if looks_like_q_only and year_col and year_col in df.columns:
-                    df[period_col] = (
-                        df[year_col].astype(str)
-                        + "-"
-                        + df[period_col].astype(str).str.upper().str.strip()
-                    )
+            df[period_col] = _normalize_year_quarter_strings(df[period_col])
         else:
             if not year_col or year_col not in df.columns or not week_col or week_col not in df.columns:
                 return None, float("nan")
             df = _ensure_period_columns(df, year_col=year_col, week_col=week_col)
             period_col = "YearQuarter"
-            period_label = "Quarter"
 
-    # Aggregate
+    # ----------------------------
+    # Entity grouping (e.g., per customer)
+    # Keep only group_cols that exist AND are not the period col itself.
+    # ----------------------------
+    entity_cols = [c for c in (group_cols or []) if c in df.columns and c != period_col]
+
+    group_keys = entity_cols + [period_col]
+
+    # Aggregate Actual per entity per period
     series = (
-        df.groupby(period_col, as_index=False)[actual_col]
+        df.groupby(group_keys, as_index=False)[actual_col]
           .sum()
           .rename(columns={actual_col: "Actual", period_col: period_label})
     )
 
-    # Sort periods properly
+    # Clean + sort
     if period_mode == "week":
         series[period_label] = pd.to_numeric(series[period_label], errors="coerce")
-        series = series.dropna(subset=[period_label]).sort_values(period_label)
+        series = series.dropna(subset=[period_label])
         series[period_label] = series[period_label].astype(int)
-    elif period_mode == "month":
-        # YYYY-MM sorts lexicographically correctly
-        series = series.sort_values(period_label)
     else:
-        # YYYY-Qn sorts lexicographically correctly if format is consistent
-        series = series.sort_values(period_label)
+        series[period_label] = series[period_label].astype(str).str.strip()
+        series = series[series[period_label] != ""]
+
+    sort_cols = entity_cols + [period_label]
+    series = series.sort_values(sort_cols)
 
     if len(series) < 2:
         return None, float("nan")
 
-    series["Prev_Actual"] = series["Actual"].shift(1)
+    # Prev_Actual should be within each entity (or global if no entity cols)
+    if entity_cols:
+        series["Prev_Actual"] = series.groupby(entity_cols)["Actual"].shift(1)
+    else:
+        series["Prev_Actual"] = series["Actual"].shift(1)
 
-    def _growth(curr, prev):
+    def _growth(curr: float, prev: float) -> float:
         if pd.isna(prev) or prev == 0:
             return float("inf") if curr > 0 else 0.0
         return (curr - prev) / prev * 100.0
@@ -2567,7 +2605,7 @@ def _run_growth_rate_aggregation(
     ]
     series["Growth_%"] = pd.to_numeric(series["Growth_%"], errors="coerce").round(1)
 
-    # Format numeric columns
+    # Format
     series["Actual"] = series["Actual"].round(0).astype(int)
     series["Prev_Actual"] = series["Prev_Actual"].fillna(0).round(0).astype(int)
 
