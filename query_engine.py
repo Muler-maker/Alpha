@@ -1982,85 +1982,85 @@ def _run_compare_aggregation(
     print(f"  entity_type: {entity_type}")
 
     # =========================================================================
-    # DISTRIBUTOR COMPARISON
+    # DISTRIBUTOR COMPARISON (supports per-period slicing)
     # =========================================================================
     if entities and entity_type == "distributor":
         entity_col = mapping.get("distributor")
-        print(f"\n[COMPARE-DIST] Distributor comparison")
-        print(f"  entity_col: {entity_col}")
-        print(f"  base_df.shape: {base_df.shape}")
-        print(f"  entities to compare: {entities}")
-        
-        # DEBUG: Show what's actually in the distributor column
-        if entity_col and entity_col in base_df.columns:
-            unique_dists = base_df[entity_col].dropna().unique()
-            print(f"  Unique distributors in base_df: {list(unique_dists)[:10]}")
-
         if not entity_col or entity_col not in base_df.columns:
-            print(f"  ❌ ERROR: entity_col '{entity_col}' not in base_df.columns")
-            print(f"  Available columns: {list(base_df.columns)[:15]}")
             return None, float("nan")
 
-        # Build comparison data for EACH entity
-        comparison_data = []
+        # Detect period mode from group_by
+        group_by = [str(x).lower() for x in (spec.get("group_by") or [])]
+        wants_quarter = any(x in ["quarter", "quarterly", "q"] for x in group_by)
+        wants_month = any(x in ["month", "monthly"] for x in group_by)
+
+        period_col = None
+        period_label = None
+
+        if wants_quarter:
+            for cand in ["Quarter", "YearQuarter", mapping.get("quarter")]:
+                if cand and cand in base_df.columns:
+                    period_col = cand
+                    period_label = "Quarter"
+                    break
+
+        elif wants_month:
+            for cand in ["Month", "YearMonth", mapping.get("month")]:
+                if cand and cand in base_df.columns:
+                    period_col = cand
+                    period_label = "Month"
+                    break
+
+        comparison_rows = []
 
         for ent in entities:
             ent_lower = str(ent).lower().strip()
-            print(f"\n  Searching for: '{ent}' (normalized: '{ent_lower}')")
-
-            # Case-insensitive substring match
             mask = base_df[entity_col].astype(str).str.lower().str.contains(
                 ent_lower, case=False, na=False, regex=False
             )
             sub = base_df[mask]
 
-            print(f"    Found {len(sub)} matching rows")
-            
-            # DEBUG: Show sample values that matched
-            if len(sub) > 0:
-                sample_dists = sub[entity_col].unique()[:3]
-                print(f"    Sample matches: {sample_dists}")
+            if sub.empty:
+                continue
 
-            if len(sub) > 0:
+            if period_col:
+                grouped = (
+                    sub.groupby(period_col, as_index=False)
+                       .agg(
+                           Total_mCi=(total_col, "sum"),
+                           Count=(total_col, "count"),
+                       )
+                )
+                grouped["Average_mCi"] = grouped["Total_mCi"] / grouped["Count"]
+                grouped.insert(0, "Distributor", ent)
+                grouped = grouped.rename(columns={period_col: period_label})
+                comparison_rows.append(grouped)
+
+            else:
                 total_mci = float(sub[total_col].sum())
                 count = len(sub)
-                avg_mci = total_mci / count if count > 0 else 0
-
-                comparison_data.append({
+                avg_mci = total_mci / count if count else 0
+                comparison_rows.append(pd.DataFrame([{
                     "Distributor": ent,
                     "Total_mCi": int(round(total_mci)),
                     "Count": count,
-                    "Average_mCi": int(round(avg_mci))
-                })
-                print(f"    ✅ Added: {int(round(total_mci))} mCi, {count} orders")
-            else:
-                # Add zero row for missing entity
-                comparison_data.append({
-                    "Distributor": ent,
-                    "Total_mCi": 0,
-                    "Count": 0,
-                    "Average_mCi": 0
-                })
-                print(f"    ⚠️  No data - added zero row")
-                # DEBUG: Show what values are actually in the column
-                all_vals = base_df[entity_col].dropna().unique()
-                print(f"    All distributor values in base_df:")
-                for val in all_vals[:15]:
-                    print(f"      - '{val}'")
+                    "Average_mCi": int(round(avg_mci)),
+                }]))
 
-        if not comparison_data:
-            print(f"  ❌ No comparison data generated!")
+        if not comparison_rows:
             return None, float("nan")
 
-        # Build result DataFrame
-        comparison_df = pd.DataFrame(comparison_data)
+        comparison_df = pd.concat(comparison_rows, ignore_index=True)
+
+        # Sort nicely if period exists
+        if period_label:
+            comparison_df = comparison_df.sort_values(
+                ["Distributor", period_label]
+            )
+
         total_mci = float(comparison_df["Total_mCi"].sum())
-
-        print(f"\n[COMPARE-DIST] ✅ Complete!")
-        print(f"  Result shape: {comparison_df.shape}")
-        print(f"  Total mCi: {total_mci:.0f}")
-
         return comparison_df, total_mci
+
 
     # =========================================================================
     # PRODUCT COMPARISON
