@@ -3033,8 +3033,20 @@ def _run_projection_vs_actual_aggregation(
     # ------------------------------------------------------------------
     # Combine Actuals + Projections
     # ------------------------------------------------------------------
-    grouped = actuals.merge(proj_grouped, on=group_cols, how="left")
-    grouped["Projected"] = grouped["Projected"].fillna(0.0)
+    # --- Build full timeline from projections (preferred) ---
+    timeline = proj_grouped.copy()
+
+    # If there are actuals in weeks without projections, keep them too
+    timeline = timeline.merge(
+        actuals,
+        on=group_cols,
+        how="outer"
+    )
+
+    timeline["Actual"] = timeline["Actual"].fillna(0.0)
+    timeline["Projected"] = timeline["Projected"].fillna(0.0)
+
+    grouped = timeline
 
     # ------------------------------------------------------------------
     # Variance calculations
