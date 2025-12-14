@@ -963,7 +963,65 @@ def _normalize_entity_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> Dict[st
     
     spec["filters"] = filters
     return spec
-
+def _detect_all_entities_pattern(question: str, spec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Detect patterns like:
+    - "compare growth rates of all customers"
+    - "growth per customer"
+    - "growth by customer"
+    - "all customers in 2025"
+    
+    When detected:
+    - DO NOT filter by customer/distributor
+    - DO add customer/distributor to group_by
+    """
+    q = (question or "").lower()
+    
+    # Pattern: "all [entity]" or "[entity]s in" or "by [entity]" or "per [entity]"
+    patterns = [
+        (r"\ball\s+(customers|distributors|products|regions|countries)\b", "all_entity"),
+        (r"\bper\s+(customer|distributor|product|region|country)\b", "per_entity"),
+        (r"\bby\s+(customer|distributor|product|region|country)\b", "by_entity"),
+        (r"growth\s+(?:rate|rates)?\s+(?:per|by|across)\s+(customers|distributors|products|regions|countries)", "growth_by_entity"),
+    ]
+    
+    for pattern, pattern_type in patterns:
+        m = re.search(pattern, q)
+        if m:
+            entity_word = m.group(1).lower().rstrip('s')  # "customers" -> "customer"
+            
+            print(f"[ALL_ENTITIES] Detected pattern: {pattern_type}")
+            print(f"  Entity: {entity_word}")
+            print(f"  Clearing entity filters and adding to group_by")
+            
+            # Map entity word to field name
+            field_map = {
+                "customer": "customer",
+                "distributor": "distributor",
+                "product": "product_sold",
+                "region": "region",
+                "country": "country",
+            }
+            
+            field = field_map.get(entity_word)
+            if not field:
+                continue
+            
+            # Clear the filter for this entity
+            filters = spec.get("filters") or {}
+            filters[field] = None
+            spec["filters"] = filters
+            
+            # Add to group_by if not already there
+            group_by = spec.get("group_by") or []
+            if field not in group_by:
+                group_by.append(field)
+                spec["group_by"] = group_by
+                print(f"  Added '{field}' to group_by: {group_by}")
+            
+            return spec
+    
+    return spec
 def _disambiguate_customer_vs_distributor(
     df: pd.DataFrame, spec: Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -3829,6 +3887,7 @@ def answer_question_from_df(user_text, df, history=None, proj_df=None, meta_df=N
     spec = _inject_customer_from_question(consolidated_df, spec)
     spec = _normalize_entity_filters(consolidated_df, spec)
     spec = _disambiguate_customer_vs_distributor(consolidated_df, spec)
+    spec = _detect_all_entities_pattern(question, spec)  # ✅ ADD THIS LINE
     spec = _normalize_product_filters(spec, question)
 
     print(f"\n[ENTITY] After entity processing:")
