@@ -37,8 +37,8 @@ def build_consolidated_df(
     - Metadata is aggregated to one row per (Year, Week of supply)
       and then joined onto orders by (Year, Week).
     - Projection is aggregated to one row per (Year, Updated week number,
-      Distributor) and then joined onto orders by
-      (Year, Week number for Activity vs Projection, Distributor).
+      Distributor) (and Catalogue when available) and then joined onto orders by
+      (Year, Week number for Activity vs Projection, Distributor) (and Catalogue when available).
 
     This function does NOT modify the source data in Sheets/Airtable – it only
     creates an in-memory dataframe for the app.
@@ -91,10 +91,8 @@ def build_consolidated_df(
             if pd.api.types.is_bool_dtype(col_series):
                 agg_dict[col] = "any"
             elif pd.api.types.is_numeric_dtype(col_series):
-                # Sum numeric metadata if it exists
                 agg_dict[col] = "sum"
             else:
-                # Concatenate unique non-empty strings
                 def _concat_unique(x):
                     vals = {str(v).strip() for v in x.dropna() if str(v).strip()}
                     return "; ".join(sorted(vals)) if vals else ""
@@ -102,14 +100,12 @@ def build_consolidated_df(
 
         meta_by_week = meta.groupby(group_keys, as_index=False).agg(agg_dict)
 
-        # Prefix metadata columns to avoid clashes
         meta_prefixed = prefix_cols(
             meta_by_week,
             prefix="Meta_",
             exclude=["Year", "Week of supply"],
         )
 
-        # Join onto orders by (Year, Week)
         merged = merged.merge(
             meta_prefixed,
             how="left",
@@ -118,7 +114,7 @@ def build_consolidated_df(
         )
 
     # ------------------------------------------------------------------ #
-    # 2) PROJECTION — one row per (Year, Updated week, Distributor)
+    # 2) PROJECTION — robust join (with Catalogue only if available)
     # ------------------------------------------------------------------ #
     if proj_df is not None and not proj_df.empty:
         proj = proj_df.copy()
@@ -146,9 +142,7 @@ def build_consolidated_df(
             )
 
         proj["Year"] = pd.to_numeric(proj["Year"], errors="coerce")
-        proj["Updated week number"] = pd.to_numeric(
-            proj["Updated week number"], errors="coerce"
-        )
+        proj["Updated week number"] = pd.to_numeric(proj["Updated week number"], errors="coerce")
         proj = proj.dropna(subset=["Year", "Updated week number", proj_dist_col])
         proj["Year"] = proj["Year"].astype(int)
         proj["Updated week number"] = proj["Updated week number"].astype(int)
@@ -160,9 +154,18 @@ def build_consolidated_df(
             }
         )
 
-        proj_group_keys = ["Year", "ProjWeek", "Distributor", "Catalogue description (sold as)"]
-        proj_agg_dict = {}
+        # Decide whether we can safely use Catalogue in the join keys
+        use_catalogue = (
+            ("Catalogue description (sold as)" in proj.columns)
+            and ("Catalogue description (sold as)" in merged.columns)
+        )
 
+        # Aggregate projections
+        proj_group_keys = ["Year", "ProjWeek", "Distributor"]
+        if use_catalogue:
+            proj_group_keys.append("Catalogue description (sold as)")
+
+        proj_agg_dict = {}
         for col in proj.columns:
             if col in proj_group_keys:
                 continue
@@ -183,9 +186,8 @@ def build_consolidated_df(
         proj_prefixed = prefix_cols(
             proj_by_key,
             prefix="Proj_",
-            exclude=["Year", "ProjWeek", "Distributor", "Catalogue description (sold as)"],
+            exclude=proj_group_keys,
         )
-
 
         if "Week number for Activity vs Projection" not in merged.columns:
             raise ValueError(
@@ -193,18 +195,42 @@ def build_consolidated_df(
                 "column needed to join projections."
             )
 
-        # Convert to numeric but KEEP rows even if this field is empty.
-        # Orders without this week will still appear; they just won't get projections.
         merged["Week number for Activity vs Projection"] = pd.to_numeric(
             merged["Week number for Activity vs Projection"], errors="coerce"
         )
 
-        merged = merged.merge(
-            proj_prefixed,
-            how="left",
-            left_on=["Year", "Week number for Activity vs Projection", "Distributor", "Catalogue description (sold as)"],
-            right_on=["Year", "ProjWeek", "Distributor", "Catalogue description (sold as)"],
-        )
+        # Merge projections onto orders
+        if use_catalogue:
+            merged = merged.merge(
+                proj_prefixed,
+                how="left",
+                left_on=[
+                    "Year",
+                    "Week number for Activity vs Projection",
+                    "Distributor",
+                    "Catalogue description (sold as)",
+                ],
+                right_on=[
+                    "Year",
+                    "ProjWeek",
+                    "Distributor",
+                    "Catalogue description (sold as)",
+                ],
+            )
+        else:
+            merged = merged.merge(
+                proj_prefixed,
+                how="left",
+                left_on=[
+                    "Year",
+                    "Week number for Activity vs Projection",
+                    "Distributor",
+                ],
+                right_on=[
+                    "Year",
+                    "ProjWeek",
+                    "Distributor",
+                ],
+            )
 
-    # Row count should still be == number of orders
     return merged
