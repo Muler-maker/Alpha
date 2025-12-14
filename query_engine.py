@@ -1838,11 +1838,11 @@ def _build_metadata_snippet(df_filtered: pd.DataFrame, spec: Dict[str, Any]) -> 
 # ============================================================================
 # COMPLETE FIXED FUNCTIONS FOR PROJECTION VS ACTUAL
 # ============================================================================
-
 def _run_aggregation(
     df_filtered: pd.DataFrame,
     spec: Dict[str, Any],
     full_df: Optional[pd.DataFrame] = None,
+    proj_df: Optional[pd.DataFrame] = None,
 ) -> Tuple[Optional[pd.DataFrame], float]:
     """
     Run the specified aggregation (sum, average, share_of_total, growth_rate, top_n, compare, projection_vs_actual)
@@ -1870,99 +1870,87 @@ def _run_aggregation(
     print(f"  Group by: {group_by}")
     print(f"  Total col: {total_col}")
 
-    # ===========================================================================
+    # =======================================================================
     # PROJECTION_VS_ACTUAL MODE - HANDLE FIRST
-    # ===========================================================================
+    # =======================================================================
     if aggregation == "projection_vs_actual":
         print(f"\n[ROUTING] Detected projection_vs_actual - calling handler")
-        return _run_projection_vs_actual_aggregation(base_df, spec, mapping, total_col, full_df=full_df)
+        return _run_projection_vs_actual_aggregation(
+            base_df=base_df,
+            spec=spec,
+            mapping=mapping,
+            total_col=total_col,
+            proj_df=proj_df,     # <-- CRITICAL
+        )
 
-    # ===========================================================================
-    # COMPARE MODE (entity or time comparison)
-    # ===========================================================================
+    # =======================================================================
+    # COMPARE MODE
+    # =======================================================================
     if aggregation == "compare":
         return _run_compare_aggregation(base_df, spec, mapping, total_col)
 
-    # ===========================================================================
-    # TOP N (ranking entities by volume)
-    # ===========================================================================
+    # =======================================================================
+    # TOP N
+    # =======================================================================
     if aggregation == "top_n":
         return _run_top_n_aggregation(base_df, spec, mapping, total_col)
 
-    # ===========================================================================
-    # GROWTH RATE (WoW / YoY)
-    # ===========================================================================
+    # =======================================================================
+    # GROWTH RATE
+    # =======================================================================
     if aggregation == "growth_rate":
+        # (we'll fix quarter/month in a separate patch if you want; this keeps current behavior)
         return _run_growth_rate_aggregation(base_df, spec, mapping, total_col, group_cols)
 
-    # ===========================================================================
-    # STANDARD AGGREGATIONS (sum, average, share_of_total)
-    # ===========================================================================
-    
-    # For sum_mci: just sum the total_col
+    # =======================================================================
+    # STANDARD AGGREGATIONS
+    # =======================================================================
     if aggregation == "sum_mci":
         overall_value = float(base_df[total_col].sum())
-        
+
         if not group_cols:
-            # No grouping: just return the sum
             print(f"  No grouping → returning scalar: {overall_value:.0f}")
             return None, overall_value
-        
-        # Group and sum
+
         grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].sum()
         grouped_df = grouped_df.sort_values(total_col, ascending=False)
-        
-        # Format mCi column
         grouped_df[total_col] = grouped_df[total_col].round(0).astype(int)
-        
         print(f"  Grouped result shape: {grouped_df.shape}")
         return grouped_df, overall_value
 
-    # For average_mci
     if aggregation == "average_mci":
         overall_value = float(base_df[total_col].mean())
-        
+
         if not group_cols:
             print(f"  No grouping → returning scalar: {overall_value:.0f}")
             return None, overall_value
-        
-        # Group and average
+
         grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].mean()
         grouped_df = grouped_df.sort_values(total_col, ascending=False)
         grouped_df[total_col] = grouped_df[total_col].round(0).astype(int)
-        
         print(f"  Grouped result shape: {grouped_df.shape}")
         return grouped_df, overall_value
 
-    # For share_of_total
     if aggregation == "share_of_total":
         total_overall = float(base_df[total_col].sum())
-        
+
         if not group_cols:
-            # Single value: share is 100%
             overall_value = 1.0
             print(f"  No grouping → returning scalar: {overall_value*100:.1f}%")
             return None, overall_value
-        
-        # Group and calculate share
+
         grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].sum()
         grouped_df["Share_%"] = (grouped_df[total_col] / total_overall * 100.0).round(1)
         grouped_df = grouped_df.sort_values(total_col, ascending=False)
-        
         grouped_df[total_col] = grouped_df[total_col].round(0).astype(int)
-        
-        # Store denominator for display
-        share_debug = {"numerator": float(grouped_df[total_col].sum()), "denominator": total_overall}
-        spec["_share_debug"] = share_debug
-        
+
+        spec["_share_debug"] = {"numerator": float(grouped_df[total_col].sum()), "denominator": total_overall}
         print(f"  Grouped result shape: {grouped_df.shape}")
         return grouped_df, (grouped_df[total_col].sum() / total_overall)
 
-    # Fallback: unknown aggregation
     print(f"  ⚠️ Unknown aggregation type: {aggregation}")
     overall_value = float(base_df[total_col].sum())
     return None, overall_value
-
 # ===========================================================================
 # HELPER: COMPARE AGGREGATION
 # ===========================================================================
@@ -2943,23 +2931,33 @@ def _run_projection_vs_actual_aggregation(
     """
     PROJECTION_VS_ACTUAL supporting all scenarios:
       1) projection + actual
-      2) neither projection nor actual  -> week appears with zeros
-      3) projection only                -> Projected > 0, Actual = 0
-      4) actual only                    -> Actual > 0, Projected = 0
+      2) neither -> week appears with zeros
+      3) projection only -> Projected > 0, Actual = 0
+      4) actual only -> Actual > 0, Projected = 0
 
-    IMPORTANT:
-    - Actuals are computed from base_df (orders).
-    - Projections are computed from proj_df (projection table) to avoid:
-        a) duplicated projection values per order row
-        b) missing projection-only weeks
+    Actuals are computed from base_df (orders).
+    Projections are computed from proj_df (projection table) to avoid:
+      - projection duplication across multiple order rows
+      - missing projection-only weeks
     """
 
-    actual_col = mapping.get("total_mci")
-    year_col = mapping.get("year") or "Year"
-    dist_col = mapping.get("distributor") or "Distributor"
+    def _norm_key(series: pd.Series) -> pd.Series:
+        return (
+            series.astype(str)
+            .fillna("")
+            .str.strip()
+            .str.replace(r"\s+", " ", regex=True)
+            .str.upper()
+        )
 
-    # Which week should actuals be grouped by?
-    # In your model, actuals should generally align to "Week number for Activity vs Projection" if present.
+    # -----------------------------
+    # Validate actual columns
+    # -----------------------------
+    actual_col = mapping.get("total_mci")
+    if not actual_col or actual_col not in base_df.columns:
+        return None, float("nan")
+
+    # Use the projection-aligned week if available, else Week
     actual_week_col = None
     for cand in [
         "Week number for Activity vs Projection",
@@ -2970,55 +2968,52 @@ def _run_projection_vs_actual_aggregation(
             actual_week_col = cand
             break
 
-    if not actual_col or actual_col not in base_df.columns:
-        return None, float("nan")
     if not actual_week_col:
-        return None, float(base_df[actual_col].sum())
+        return None, float(pd.to_numeric(base_df[actual_col], errors="coerce").fillna(0.0).sum())
 
-    # Infer target year + distributor from spec or base_df
+    # Infer distributor + year from spec or base_df
+    year_col = mapping.get("year") or "Year"
+    dist_col = mapping.get("distributor") or "Distributor"
+
     target_year = spec.get("year")
-    if target_year is None and year_col in base_df.columns and base_df[year_col].notna().any():
-        target_year = int(pd.to_numeric(base_df[year_col], errors="coerce").dropna().iloc[0])
+    if target_year is None and year_col in base_df.columns:
+        yrs = pd.to_numeric(base_df[year_col], errors="coerce").dropna()
+        if not yrs.empty:
+            target_year = int(yrs.iloc[0])
     if target_year is None:
         return None, float("nan")
 
     target_distributor = spec.get("distributor")
-    if target_distributor is None and dist_col in base_df.columns and base_df[dist_col].notna().any():
-        target_distributor = str(base_df[dist_col].dropna().iloc[0])
+    if target_distributor is None and dist_col in base_df.columns:
+        vals = base_df[dist_col].dropna()
+        if not vals.empty:
+            target_distributor = str(vals.iloc[0])
+
+    target_distributor_norm = _norm_key(pd.Series([target_distributor])).iloc[0] if target_distributor else ""
 
     # -----------------------------
-    # 1) Actuals by week (from orders)
+    # 1) Actuals by week (orders)
     # -----------------------------
-    base = base_df.copy()
-    base[actual_week_col] = pd.to_numeric(base[actual_week_col], errors="coerce")
-    base[actual_col] = pd.to_numeric(base[actual_col], errors="coerce").fillna(0.0)
+    a = base_df.copy()
+    a[actual_week_col] = pd.to_numeric(a[actual_week_col], errors="coerce")
+    a[actual_col] = pd.to_numeric(a[actual_col], errors="coerce").fillna(0.0)
 
     actual_by_week = (
-        base.dropna(subset=[actual_week_col])
-            .groupby(actual_week_col, as_index=False)[actual_col]
-            .sum()
-            .rename(columns={actual_week_col: "Week", actual_col: "Actual"})
+        a.dropna(subset=[actual_week_col])
+         .groupby(actual_week_col, as_index=False)[actual_col]
+         .sum()
+         .rename(columns={actual_week_col: "Week", actual_col: "Actual"})
     )
 
     # -----------------------------
-    # 2) Projections by week (from proj_df)
+    # 2) Projections by week (proj_df)
     # -----------------------------
-    proj_by_week = pd.DataFrame(columns=["Week", "Projected"])
+    proj_by_week = pd.DataFrame({"Week": [], "Projected": []})
 
     if proj_df is not None and isinstance(proj_df, pd.DataFrame) and not proj_df.empty:
         p = proj_df.copy()
 
-        # Identify required columns in projection table
-        # Week column in projection table is typically "Updated week number"
-        proj_week_src = None
-        for cand in ["Updated week number", "ProjWeek", "Week"]:
-            if cand in p.columns:
-                proj_week_src = cand
-                break
-        if proj_week_src is None:
-            proj_week_src = "Updated week number"  # will fail below with clear error if missing
-
-        # Distributor column name can vary
+        # Identify distributor column in proj table
         proj_dist_col = None
         for cand in [
             "Distributing company (from Company name)",
@@ -3028,57 +3023,79 @@ def _run_projection_vs_actual_aggregation(
             if cand in p.columns:
                 proj_dist_col = cand
                 break
-
-        if "Year" not in p.columns:
-            raise ValueError("Projection table is missing 'Year'.")
-        if proj_week_src not in p.columns:
-            raise ValueError(f"Projection table is missing '{proj_week_src}'.")
         if proj_dist_col is None:
             raise ValueError("Projection table is missing distributor column.")
-        if "Amount" not in p.columns and "Proj_Amount" not in p.columns and "Projected" not in p.columns:
-            # Adjust this if your projection amount column has a different name
-            raise ValueError("Projection table is missing the projection amount column (expected 'Amount' or similar).")
 
-        # Choose projection amount column (adapt if your real column differs)
-        proj_amount_col = None
-        for cand in ["Amount", "Proj_Amount", "Projected", "mCi", "mCi projected"]:
+        # Identify week column in proj table
+        proj_week_col = None
+        for cand in ["Updated week number", "ProjWeek", "Week"]:
             if cand in p.columns:
-                proj_amount_col = cand
+                proj_week_col = cand
                 break
-        if proj_amount_col is None:
-            # last resort: try any numeric column named like it
-            raise ValueError("Could not locate projection amount column in projection table.")
+        if proj_week_col is None:
+            raise ValueError("Projection table is missing week column (expected 'Updated week number').")
 
-        # Filter to distributor/year
+        if "Year" not in p.columns:
+            raise ValueError("Projection table is missing 'Year' column.")
+
+        # Robustly choose amount column:
+        # 1) preferred names
+        preferred_amount_cols = [
+            "Amount",
+            "mCi",
+            "mCi projected",
+            "Projected",
+            "Projected mCi",
+            "Projection",
+            "Proj_Amount",  # in case you're passing an already-prefixed df
+        ]
+        proj_amount_col = next((c for c in preferred_amount_cols if c in p.columns), None)
+
+        # 2) fallback: pick the "best" numeric column not in keys
+        if proj_amount_col is None:
+            key_like = {proj_dist_col, proj_week_col, "Year", "Catalogue description (sold as)"}
+            numeric_candidates = []
+            for c in p.columns:
+                if c in key_like:
+                    continue
+                s = pd.to_numeric(p[c], errors="coerce")
+                # consider it numeric if it has at least some numbers
+                if s.notna().sum() > 0:
+                    numeric_candidates.append((c, float(s.fillna(0).abs().sum())))
+            if not numeric_candidates:
+                raise ValueError("Could not locate projection amount column in projection table.")
+            # choose the numeric column with the largest absolute total
+            proj_amount_col = sorted(numeric_candidates, key=lambda t: t[1], reverse=True)[0][0]
+
+        # Clean types
         p["Year"] = pd.to_numeric(p["Year"], errors="coerce")
-        p[proj_week_src] = pd.to_numeric(p[proj_week_src], errors="coerce")
+        p[proj_week_col] = pd.to_numeric(p[proj_week_col], errors="coerce")
         p[proj_amount_col] = pd.to_numeric(p[proj_amount_col], errors="coerce").fillna(0.0)
 
-        p = p.dropna(subset=["Year", proj_week_src, proj_dist_col])
+        # Normalize distributor keys and filter
+        p = p.dropna(subset=["Year", proj_week_col, proj_dist_col])
         p = p[p["Year"] == target_year]
-        if target_distributor is not None:
-            p = p[p[proj_dist_col].astype(str).str.strip() == str(target_distributor).strip()]
 
-        # OPTIONAL: if you want catalogue-aware projections, filter by the same catalogue as in base_df
-        # Only do this if you have catalogue in BOTH places and your intent is product-specific.
-        # Otherwise, skip catalogue to keep distributor-level projections.
-        # (Leaving as distributor-level by default.)
+        if target_distributor_norm:
+            p["_dist_norm"] = _norm_key(p[proj_dist_col])
+            p = p[p["_dist_norm"] == target_distributor_norm]
 
+        # Group projections by week
         proj_by_week = (
-            p.groupby(proj_week_src, as_index=False)[proj_amount_col]
+            p.groupby(proj_week_col, as_index=False)[proj_amount_col]
              .sum()
-             .rename(columns={proj_week_src: "Week", proj_amount_col: "Projected"})
+             .rename(columns={proj_week_col: "Week", proj_amount_col: "Projected"})
         )
 
     # -----------------------------
-    # 3) Week spine 1..52 (extend if needed)
+    # 3) Week spine 1..52
     # -----------------------------
     max_week = 52
     for df_ in [actual_by_week, proj_by_week]:
         if not df_.empty:
-            wmax = int(pd.to_numeric(df_["Week"], errors="coerce").dropna().max())
-            if wmax > max_week:
-                max_week = wmax
+            wmax = pd.to_numeric(df_["Week"], errors="coerce").dropna()
+            if not wmax.empty:
+                max_week = max(max_week, int(wmax.max()))
 
     spine = pd.DataFrame({"Week": list(range(1, max_week + 1))})
 
@@ -3756,12 +3773,8 @@ def _pivot_growth_by_entity(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFr
 # ============================================
 # MAIN ENTRYPOINT
 # ============================================
-def answer_question_from_df(
-    question: str,
-    consolidated_df: pd.DataFrame,
-    history: Optional[List[Dict[str, str]]] = None,
-    client=None,
-) -> str:
+def answer_question_from_df(user_text, df, history=None, proj_df=None, meta_df=None):
+ -> str:
     """Main function to interpret, execute, and answer a question from the DataFrame."""
     if consolidated_df is None or consolidated_df.empty:
         return "The consolidated data is empty. Please load data first."
@@ -3884,7 +3897,12 @@ def answer_question_from_df(
     # ------------------------------------------------------------------
     # 3) Run aggregation
     # ------------------------------------------------------------------
-    group_df, numeric_value = _run_aggregation(df_filtered, spec, consolidated_df)
+    group_df, numeric_value = _run_aggregation(
+    df_filtered=df_filtered,
+    spec=spec,
+    full_df=consolidated_df,
+    proj_df=proj_df,
+)
 
     print(f"\n[AGGREGATION] After aggregation:")
     if group_df is not None:
