@@ -2957,7 +2957,9 @@ def _run_projection_vs_actual_aggregation(
 
     if proj_unique.empty:
         print("⚠️ No matched projection rows after de-duplication")
-        proj_grouped = actuals.assign(Projected=0)
+        # IMPORTANT: proj_grouped must NOT include 'Actual' to avoid Actual_x/Actual_y
+        proj_grouped = actuals[group_cols].copy()
+        proj_grouped["Projected"] = 0.0
     else:
         proj_grouped = (
             proj_unique.groupby(group_cols, as_index=False)[proj_col]
