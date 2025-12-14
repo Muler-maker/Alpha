@@ -3506,6 +3506,11 @@ def _pivot_growth_by_entity(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFr
 # ============================================
 def answer_question_from_df(user_text, df, history=None, proj_df=None, meta_df=None) -> str:
     """Main function to interpret, execute, and answer a question from the DataFrame."""
+
+    # Normalize naming: the rest of the code expects these variable names
+    consolidated_df = df
+    question = user_text
+
     if consolidated_df is None or consolidated_df.empty:
         return "The consolidated data is empty. Please load data first."
 
