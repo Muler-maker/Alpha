@@ -1350,7 +1350,7 @@ def _force_cancellation_status_from_text(question: str, spec: Dict[str, Any]) ->
 
     return spec
 def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
-    """Apply all filters from the spec to the DataFrame."""
+    """Apply all filters from the spec to the DataFrame (accent-insensitive text matching for text fields)."""
     if df is None or not isinstance(df, pd.DataFrame):
         return pd.DataFrame()
 
@@ -1364,21 +1364,71 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
 
     result = df.copy()
 
-    def contains(df_: pd.DataFrame, col: str, value) -> pd.Series:
+    # -----------------------------
+    # Helpers
+    # -----------------------------
+    def contains(col: str, value) -> pd.Series:
         """
-        Accent-insensitive, case-insensitive containment match.
+        Accent-insensitive, case-insensitive containment match against CURRENT `result`.
+        Returns a boolean mask aligned to result.index.
         """
-        if col not in df_.columns:
-            return pd.Series([False] * len(df_), index=df_.index)
+        if not col or col not in result.columns:
+            return pd.Series(False, index=result.index)
 
         needle = _normalize_text(value)
-        haystack = df_[col].astype(str).apply(_normalize_text)
+        if not needle:
+            return pd.Series(True, index=result.index)
+
+        haystack = result[col].astype(str).apply(_normalize_text)
         return haystack.str.contains(needle, na=False, regex=False)
 
-    # Customer
+    def _to_int(v):
+        try:
+            if v is None or v == "":
+                return None
+            return int(float(v))
+        except Exception:
+            return None
+
+    def _parse_list_maybe(x):
+        """
+        Accept:
+          - list
+          - tuple
+          - stringified list: "['A','B']" or '["A","B"]'
+          - plain string -> None (meaning: treat as single value)
+        """
+        if isinstance(x, list):
+            return x
+        if isinstance(x, tuple):
+            return list(x)
+        if isinstance(x, str):
+            t = x.strip()
+            if t.startswith("[") and t.endswith("]"):
+                # Try JSON first, then ast.literal_eval
+                try:
+                    import json
+                    t_json = t.replace("'", '"')
+                    parsed = json.loads(t_json)
+                    if isinstance(parsed, list):
+                        return parsed
+                except Exception:
+                    pass
+                try:
+                    import ast
+                    parsed = ast.literal_eval(t)
+                    if isinstance(parsed, list):
+                        return parsed
+                except Exception:
+                    return None
+        return None
+
+    # -----------------------------
+    # CUSTOMER (accent-insensitive)
+    # -----------------------------
     if filters.get("customer") and mapping.get("customer"):
         col = mapping["customer"]
-        result = result[contains(result, col, filters["customer"])]
+        result = result[contains(col, filters["customer"])]
 
     # --- NEW PROTECTION: avoid broken multi-entity distributor filters ---
     dist_val = filters.get("distributor")
@@ -1387,92 +1437,101 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
         if (" vs " in lv or " and " in lv) and "dsd" in lv and "pi medical" in lv:
             print(f"🧹 Dropping multi-entity distributor filter: '{dist_val}'")
             filters["distributor"] = None
-    # ----
+            dist_val = None
+    # ---------------------------------------------------------------
 
-    # Distributor (supports single value, list, or stringified list)
+    # -----------------------------
+    # DISTRIBUTOR (accent-insensitive, supports list / stringified list)
+    # -----------------------------
     if filters.get("distributor") and mapping.get("distributor"):
-        dist_val = filters["distributor"]
         col = mapping["distributor"]
+        dist_val = filters["distributor"]
 
-        def _apply_multi_distributor(values):
-            mask = None
+        def _apply_multi(values):
+            mask = pd.Series(False, index=result.index)
             for v in values:
-                cur = contains(result, col, v)
-                mask = cur if mask is None else (mask | cur)
-            return result[mask] if mask is not None else result.iloc[0:0]
+                mask = mask | contains(col, v)
+            return mask
 
-        if isinstance(dist_val, list):
-            result = _apply_multi_distributor(dist_val)
+        parsed_list = _parse_list_maybe(dist_val)
 
-        elif isinstance(dist_val, str):
-            text = dist_val.strip()
-
-            parsed_list = None
-            if text.startswith("[") and text.endswith("]"):
-                try:
-                    parsed = ast.literal_eval(text)
-                    if isinstance(parsed, list):
-                        parsed_list = parsed
-                except Exception:
-                    parsed_list = None
-
-            if parsed_list:
-                result = _apply_multi_distributor(parsed_list)
-            else:
-                result = result[contains(result, col, text)]
-
+        if parsed_list is not None:
+            result = result[_apply_multi(parsed_list)]
         else:
-            result = result[contains(result, col, dist_val)]
+            result = result[contains(col, dist_val)]
 
-    # Year
+    # -----------------------------
+    # YEAR (numeric safe)
+    # -----------------------------
     if filters.get("year") and mapping.get("year"):
-        result = result[result[mapping["year"]] == filters["year"]]
+        ycol = mapping["year"]
+        yval = _to_int(filters["year"])
+        if yval is not None and ycol in result.columns:
+            result = result[pd.to_numeric(result[ycol], errors="coerce").fillna(-999999).astype(int) == yval]
 
-    # Month
+    # -----------------------------
+    # MONTH (numeric safe)
+    # -----------------------------
     if filters.get("month") and mapping.get("month"):
-        try:
-            month_val = int(filters["month"])
-        except Exception:
-            month_val = None
-        if month_val is not None:
-            result = result[result[mapping["month"]] == month_val]
+        mcol = mapping["month"]
+        mval = _to_int(filters["month"])
+        if mval is not None and mcol in result.columns:
+            result = result[pd.to_numeric(result[mcol], errors="coerce").fillna(-999999).astype(int) == mval]
 
-    # Quarter
+    # -----------------------------
+    # QUARTER (supports "1"/"Q1"/"2025-Q1" depending on your data)
+    # -----------------------------
     if filters.get("quarter") and mapping.get("quarter"):
-        quarter_val = str(filters["quarter"]).upper().strip()
-        if quarter_val in {"1", "2", "3", "4"}:
-            quarter_val = f"Q{quarter_val}"
-        result = result[result[mapping["quarter"]] == quarter_val]
+        qcol = mapping["quarter"]
+        qval_raw = str(filters["quarter"]).upper().strip()
 
-    # Half-year
+        # Normalize numeric quarter -> "Qn"
+        if qval_raw in {"1", "2", "3", "4"}:
+            qval_raw = f"Q{qval_raw}"
+
+        # We do NOT assume whether your column is "Q1" or "2025-Q1".
+        # We match by containment (accent-insensitive not needed, but harmless).
+        if qcol in result.columns:
+            result = result[contains(qcol, qval_raw)]
+
+    # -----------------------------
+    # HALF-YEAR (H1/H2 exact-ish; use contains for robustness)
+    # -----------------------------
     if filters.get("half_year") and mapping.get("half_year"):
+        hycol = mapping["half_year"]
         hy_val = str(filters["half_year"]).upper().strip()
         if hy_val in {"1", "H1", "FIRST", "FIRST HALF", "1ST HALF"}:
             hy_val = "H1"
         elif hy_val in {"2", "H2", "SECOND", "SECOND HALF", "2ND HALF"}:
             hy_val = "H2"
-        result = result[result[mapping["half_year"]] == hy_val]
+        if hycol in result.columns:
+            result = result[contains(hycol, hy_val)]
 
-    # Week (explicit single week – NOT for dynamic windows)
+    # -----------------------------
+    # WEEK (numeric safe; explicit single week – NOT for dynamic windows)
+    # -----------------------------
     if filters.get("week") and mapping.get("week"):
-        result = result[result[mapping["week"]] == filters["week"]]
+        wcol = mapping["week"]
+        wval = _to_int(filters["week"])
+        if wval is not None and wcol in result.columns:
+            result = result[pd.to_numeric(result[wcol], errors="coerce").fillna(-999999).astype(int) == wval]
 
-    # Country
+    # -----------------------------
+    # COUNTRY / REGION / PRODUCTION SITE (accent-insensitive)
+    # -----------------------------
     if filters.get("country") and mapping.get("country"):
         col = mapping["country"]
-        result = result[contains(result, col, filters["country"])]
+        result = result[contains(col, filters["country"])]
 
-    # Region
     if filters.get("region") and mapping.get("region"):
         col = mapping["region"]
-        result = result[contains(result, col, filters["region"])]
+        result = result[contains(col, filters["region"])]
 
-    # Production site
     if filters.get("production_site") and mapping.get("production_site"):
         col = mapping["production_site"]
-        result = result[contains(result, col, filters["production_site"])]
+        result = result[contains(col, filters["production_site"])]
 
-    # --- Product filters (kept as-is; no need to change unless you want accent-insensitive product matching too) ---
+    # --- Product filters (kept as-is; unchanged) ---
     def _product_mask(series: pd.Series, product_query: str) -> pd.Series:
         s = series.astype(str)
         col = s.str.lower()
@@ -1535,6 +1594,7 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
         result = result[mask]
 
     return result
+
 
 def _calculate_yoy_growth(
     df: pd.DataFrame,
