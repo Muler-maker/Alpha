@@ -1784,122 +1784,10 @@ def _build_metadata_snippet(df_filtered: pd.DataFrame, spec: Dict[str, Any]) -> 
         bullets += "\n- … (additional events exist for these weeks but are not shown here)"
 
     return intro + bullets
-def _run_aggregation(
-    df_filtered: pd.DataFrame,
-    spec: Dict[str, Any],
-    full_df: Optional[pd.DataFrame] = None,
-) -> Tuple[Optional[pd.DataFrame], float]:
-    """
-    Run the specified aggregation (sum, average, share_of_total, growth_rate, top_n, compare)
-    on the filtered data.
-    """
-    if df_filtered is None or not isinstance(df_filtered, pd.DataFrame) or df_filtered.empty:
-        return None, float("nan")
 
-    base_df = df_filtered
-    mapping = _get_mapping(base_df)
-    total_col = mapping.get("total_mci")
-
-    if not total_col or total_col not in base_df.columns:
-        return None, float("nan")
-
-    aggregation = spec.get("aggregation", "sum_mci") or "sum_mci"
-    group_by = spec.get("group_by") or []
-    group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
-
-    print(f"\n{'='*70}")
-    print(f"_run_aggregation() - {aggregation.upper()}")
-    print(f"{'='*70}")
-    print(f"  Input shape: {base_df.shape}")
-    print(f"  Aggregation: {aggregation}")
-    print(f"  Group by: {group_by}")
-    print(f"  Total col: {total_col}")
-
-    # ===========================================================================
-    # COMPARE MODE (entity or time comparison)
-    # ===========================================================================
-    if aggregation == "compare":
-        return _run_compare_aggregation(base_df, spec, mapping, total_col)
-
-    # ===========================================================================
-    # TOP N (ranking entities by volume)
-    # ===========================================================================
-    if aggregation == "top_n":
-        return _run_top_n_aggregation(base_df, spec, mapping, total_col)
-
-    # ===========================================================================
-    # GROWTH RATE (WoW / YoY)
-    # ===========================================================================
-    if aggregation == "growth_rate":
-        return _run_growth_rate_aggregation(base_df, spec, mapping, total_col, group_cols)
-
-    # ===========================================================================
-    # STANDARD AGGREGATIONS (sum, average, share_of_total)
-    # ===========================================================================
-    
-    # For sum_mci: just sum the total_col
-    if aggregation == "sum_mci":
-        overall_value = float(base_df[total_col].sum())
-        
-        if not group_cols:
-            # No grouping: just return the sum
-            print(f"  No grouping → returning scalar: {overall_value:.0f}")
-            return None, overall_value
-        
-        # Group and sum
-        grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].sum()
-        grouped_df = grouped_df.sort_values(total_col, ascending=False)
-        
-        # Format mCi column
-        grouped_df[total_col] = grouped_df[total_col].round(0).astype(int)
-        
-        print(f"  Grouped result shape: {grouped_df.shape}")
-        return grouped_df, overall_value
-
-    # For average_mci
-    if aggregation == "average_mci":
-        overall_value = float(base_df[total_col].mean())
-        
-        if not group_cols:
-            print(f"  No grouping → returning scalar: {overall_value:.0f}")
-            return None, overall_value
-        
-        # Group and average
-        grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].mean()
-        grouped_df = grouped_df.sort_values(total_col, ascending=False)
-        grouped_df[total_col] = grouped_df[total_col].round(0).astype(int)
-        
-        print(f"  Grouped result shape: {grouped_df.shape}")
-        return grouped_df, overall_value
-
-    # For share_of_total
-    if aggregation == "share_of_total":
-        total_overall = float(base_df[total_col].sum())
-        
-        if not group_cols:
-            # Single value: share is 100%
-            overall_value = 1.0
-            print(f"  No grouping → returning scalar: {overall_value*100:.1f}%")
-            return None, overall_value
-        
-        # Group and calculate share
-        grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].sum()
-        grouped_df["Share_%"] = (grouped_df[total_col] / total_overall * 100.0).round(1)
-        grouped_df = grouped_df.sort_values(total_col, ascending=False)
-        
-        grouped_df[total_col] = grouped_df[total_col].round(0).astype(int)
-        
-        # Store denominator for display
-        share_debug = {"numerator": float(grouped_df[total_col].sum()), "denominator": total_overall}
-        spec["_share_debug"] = share_debug
-        
-        print(f"  Grouped result shape: {grouped_df.shape}")
-        return grouped_df, (grouped_df[total_col].sum() / total_overall)
-
-    # Fallback: unknown aggregation
-    print(f"  ⚠️ Unknown aggregation type: {aggregation}")
-    overall_value = float(base_df[total_col].sum())
-    return None, overall_value
+# ============================================================================
+# COMPLETE FIXED FUNCTIONS FOR PROJECTION VS ACTUAL
+# ============================================================================
 
 def _run_aggregation(
     df_filtered: pd.DataFrame,
@@ -3079,11 +2967,15 @@ def _run_projection_vs_actual_aggregation(
     
     # Calculate variance and variance percentage
     grouped["Variance"] = grouped["Actual"] - grouped["Projected"]
-    grouped["Variance_%"] = (
-        (grouped["Variance"] / grouped["Projected"] * 100.0)
-        .fillna(0.0)
-        .round(1)
-    )
+    
+    # Handle division by zero: if Projected is 0, set Variance_% to null or special value
+    grouped["Variance_%"] = grouped.apply(
+        lambda row: (
+            (row["Variance"] / row["Projected"] * 100.0) if row["Projected"] != 0 
+            else (float('nan') if row["Actual"] == 0 else float('inf'))
+        ),
+        axis=1
+    ).round(1)
     
     # Format numeric columns as integers (except percentages)
     for col in ["Actual", "Projected", "Variance"]:
@@ -3102,6 +2994,54 @@ def _run_projection_vs_actual_aggregation(
     print(grouped.head(3))
     
     return grouped, total_actual
+
+# ============================================================================
+# UPDATE ANSWER SECTION IN answer_question_from_df()
+# ============================================================================
+# Find the big elif/if chain that builds core_answer and add this section
+# Make sure it comes BEFORE "elif aggregation == 'growth_rate'":
+
+def _build_core_answer_projection_vs_actual(
+    group_df: Optional[pd.DataFrame],
+    numeric_value: float,
+    status_text: str,
+    filter_text: str,
+    aggregation: str,
+) -> str:
+    """
+    Build the textual answer for projection_vs_actual aggregation.
+    """
+    if group_df is None:
+        return (
+            f"Based on {status_text} for {filter_text}, "
+            f"the actual ordered amount is **{numeric_value:,.0f} mCi**."
+        )
+    
+    preview_md = group_df.to_markdown(index=False)
+    
+    # Extract summary totals
+    if "Actual" in group_df.columns:
+        total_actual = int(group_df["Actual"].sum())
+        total_projected = int(group_df["Projected"].sum()) if "Projected" in group_df.columns else 0
+        total_variance = total_actual - total_projected
+        variance_pct = (total_variance / total_projected * 100.0) if total_projected != 0 else 0.0
+        
+        header = (
+            f"Here is the **weekly actual vs projected** for {filter_text} "
+            f"({status_text}):\n\n"
+            f"**Summary:**\n"
+            f"- **Total Actual:** {total_actual:,} mCi\n"
+            f"- **Total Projected:** {total_projected:,} mCi\n"
+            f"- **Total Variance:** {total_variance:+,} mCi ({variance_pct:+.1f}%)\n\n"
+            f"**Weekly Breakdown:**\n\n"
+        )
+    else:
+        header = (
+            f"Here is the **actual vs projected breakdown** for {filter_text} "
+            f"({status_text}):\n\n"
+        )
+    
+    return header + (preview_md or "No data available")
 
 # --------------------------------------------------------------------
 # 3) PUBLIC ENTRYPOINT – called from app.py
@@ -4008,14 +3948,62 @@ def answer_question_from_df(
 # In answer_question_from_df(), find the COMPARE section and replace it with:
 
     # COMPARE - distributor/product comparison
-    if aggregation == "compare":
+# PROJECTION VS ACTUAL
+    if aggregation == "projection_vs_actual":
+        if group_df is None:
+            core_answer = (
+                f"Based on {status_text} for {filter_text}, "
+                f"the actual ordered amount is **{numeric_value:,.0f} mCi**."
+            )
+        else:
+            # Check if this is an "actual only" result (no projections)
+            has_projection = "Projected" in group_df.columns and group_df["Projected"].sum() > 0
+            
+            if not has_projection:
+                # Only actuals, no projections available
+                preview_md = group_df.to_markdown(index=False)
+                core_answer = (
+                    f"Projections are not available for {filter_text}. "
+                    f"Here are the **actual orders** for {status_text}:\n\n"
+                    + (preview_md or "No data available")
+                )
+            else:
+                # Full projection vs actual comparison
+                preview_md = group_df.to_markdown(index=False)
+                
+                # Extract summary totals
+                if "Actual" in group_df.columns:
+                    total_actual = int(group_df["Actual"].sum())
+                    total_projected = int(group_df["Projected"].sum()) if "Projected" in group_df.columns else 0
+                    total_variance = total_actual - total_projected
+                    variance_pct = (total_variance / total_projected * 100.0) if total_projected != 0 else 0.0
+                    
+                    header = (
+                        f"Here is the **weekly actual vs projected** for {filter_text} "
+                        f"({status_text}):\n\n"
+                        f"**Summary:**\n"
+                        f"- **Total Actual:** {total_actual:,} mCi\n"
+                        f"- **Total Projected:** {total_projected:,} mCi\n"
+                        f"- **Total Variance:** {total_variance:+,} mCi ({variance_pct:+.1f}%)\n\n"
+                        f"**Weekly Breakdown:**\n\n"
+                    )
+                    core_answer = header + (preview_md or "No data available")
+                else:
+                    core_answer = (
+                        f"Here is the **actual vs projected breakdown** for {filter_text} "
+                        f"({status_text}):\n\n"
+                        + (preview_md or "No data available")
+                    )
+
+    # COMPARE - distributor/product comparison
+    elif aggregation == "compare":
         if group_df is None:
             core_answer = (
                 f"Based on {status_text} for {filter_text}, "
                 f"the total ordered amount is **{numeric_value:,.0f} mCi**."
             )
         else:
-            # Build a better header that shows what we're comparing
+            preview_md = group_df.to_markdown(index=False)
             compare = spec.get("compare") or {}
             entity_type = compare.get("entity_type", "entities")
             entities = compare.get("entities", [])
@@ -4042,15 +4030,9 @@ def answer_question_from_df(
                     f"Here is a **side-by-side comparison** for {status_text} for {filter_text}:\n\n"
                 )
             
-            # Use the pre-built markdown table from _run_aggregation
-            table_md = spec.get("_markdown_table", "")
-            
-            if table_md:
-                core_answer = header + table_md
-            else:
-                # Fallback: build it here if not in spec
-                core_answer = header + "Unable to generate table"
-    # SUM (default), TOP N – same textual skeleton
+            core_answer = header + (preview_md or "No data available")
+
+    # SUM (default), TOP N
     elif aggregation in ("sum_mci", "top_n"):
         if group_df is None:
             core_answer = (
@@ -4104,13 +4086,9 @@ def answer_question_from_df(
         else:
             den = share_debug.get("denominator")
             if den is not None and den != 0:
-                denom_txt = (
-                    f"The total ordered amount (denominator) is **{den:,.0f} mCi**."
-                )
+                denom_txt = f"The total ordered amount (denominator) is **{den:,.0f} mCi**."
             else:
-                denom_txt = (
-                    "The total ordered amount (denominator) is derived from the current filters."
-                )
+                denom_txt = "The total ordered amount (denominator) is derived from the current filters."
             preview_md = group_df.to_markdown(index=False)
             header = (
                 f"Here is the **share of total ordered amount per group** for {status_text} "
@@ -4154,9 +4132,7 @@ def answer_question_from_df(
                 core_answer = header + (preview_md or "")
 
             # Year-over-year growth table
-            elif "YoY_Growth" in cols or any(
-                "vs" in str(c) and "Growth" in str(c) for c in cols
-            ):
+            elif "YoY_Growth" in cols or any("vs" in str(c) and "Growth" in str(c) for c in cols):
                 preview_md = group_df.to_markdown(index=False)
                 header = (
                     f"Here is the **year-over-year growth** "
