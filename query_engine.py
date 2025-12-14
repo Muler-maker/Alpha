@@ -974,6 +974,7 @@ def _detect_all_entities_pattern(question: str, spec: Dict[str, Any]) -> Dict[st
     When detected:
     - DO NOT filter by customer/distributor
     - DO add customer/distributor to group_by
+    - SET FLAG to prevent injection from overriding
     """
     q = (question or "").lower()
     
@@ -1007,9 +1008,17 @@ def _detect_all_entities_pattern(question: str, spec: Dict[str, Any]) -> Dict[st
             if not field:
                 continue
             
-            # Clear the filter for this entity
+            # Clear ALL entity filters (not just the matched one)
+            # This prevents leftover filters from overriding our "all" intent
             filters = spec.get("filters") or {}
-            filters[field] = None
+            filters["customer"] = None
+            filters["distributor"] = None
+            filters["product_sold"] = None
+            filters["region"] = None
+            filters["country"] = None
+            
+            # Now set ONLY the one we're grouping by
+            filters[field] = None  # Explicitly None = no filter
             spec["filters"] = filters
             
             # Add to group_by if not already there
@@ -1018,6 +1027,11 @@ def _detect_all_entities_pattern(question: str, spec: Dict[str, Any]) -> Dict[st
                 group_by.append(field)
                 spec["group_by"] = group_by
                 print(f"  Added '{field}' to group_by: {group_by}")
+            
+            # ✅ CRITICAL: Mark that we detected "all" pattern
+            spec["_all_entities_detected"] = True
+            print(f"  Set _all_entities_detected = True to prevent injection")
+            print(f"  Cleared ALL entity filters: customer, distributor, product, region, country")
             
             return spec
     
