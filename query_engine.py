@@ -1283,10 +1283,17 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     
     result = df.copy()
 
-    def contains(col_name: str, value: str) -> pd.Series:
-        return result[col_name].astype(str).str.contains(
-            str(value), case=False, na=False, regex=False
-        )
+    def contains(df: pd.DataFrame, col: str, value) -> pd.Series:
+        """
+        Accent-insensitive, case-insensitive containment match
+        """
+        if col not in df.columns:
+            return pd.Series([False] * len(df), index=df.index)
+
+        needle = _normalize_text(value)
+        haystack = df[col].astype(str).apply(_normalize_text)
+
+        return haystack.str.contains(needle, na=False)
 
     # Customer
     if filters.get("customer") and mapping.get("customer"):
@@ -2011,15 +2018,51 @@ def _run_compare_aggregation(
     """
     Execute COMPARE aggregation (side-by-side entity comparison).
     Handles: distributors, products, customers, etc.
+
+    Key improvement:
+    - Accent/diacritic-insensitive matching for user-typed entities (e.g., Comissao == Comissão)
+    - Supports optional period slicing (Month/Quarter) when requested via spec["group_by"]
     """
+    import unicodedata
+
+    if base_df is None or base_df.empty:
+        return None, float("nan")
+
+    # -----------------------------
+    # Helpers (accent-insensitive)
+    # -----------------------------
+    def _strip_accents(s: str) -> str:
+        if s is None:
+            return ""
+        s = str(s)
+        s = unicodedata.normalize("NFKD", s)
+        return "".join(ch for ch in s if not unicodedata.combining(ch))
+
+    def _norm_text(s: str) -> str:
+        s = _strip_accents(s)
+        return " ".join(s.strip().lower().split())
+
+    def _norm_series(series: pd.Series) -> pd.Series:
+        ser = series.astype(str).fillna("")
+        ser = ser.map(_strip_accents)
+        ser = ser.str.lower().str.strip().str.replace(r"\s+", " ", regex=True)
+        return ser
+
+    def _contains_norm(series: pd.Series, needle: str) -> pd.Series:
+        n = _norm_text(needle)
+        if not n:
+            return pd.Series([False] * len(series), index=series.index)
+        return _norm_series(series).str.contains(n, na=False, regex=False)
+
+    # -----------------------------
+    # Spec parsing
+    # -----------------------------
     compare = spec.get("compare") or {}
     if compare is None:
         compare = {}
     spec["compare"] = compare
 
-    entities = compare.get("entities")
-    if entities is None:
-        entities = []
+    entities = compare.get("entities") or []
     compare["entities"] = entities
     spec["compare"] = compare
 
@@ -2029,47 +2072,64 @@ def _run_compare_aggregation(
     print(f"  entities: {entities}")
     print(f"  entity_type: {entity_type}")
 
+    # Determine requested period mode from group_by
+    group_by = [str(x).lower() for x in (spec.get("group_by") or [])]
+    wants_quarter = any(x in ["quarter", "quarterly", "q"] for x in group_by)
+    wants_month = any(x in ["month", "monthly"] for x in group_by)
+
+    period_col = None
+    period_label = None
+
+    if wants_quarter:
+        for cand in ["YearQuarter", "Quarter", mapping.get("quarter")]:
+            if cand and cand in base_df.columns:
+                period_col = cand
+                period_label = "Quarter"
+                break
+
+    elif wants_month:
+        for cand in ["YearMonth", "Month", mapping.get("month")]:
+            if cand and cand in base_df.columns:
+                period_col = cand
+                period_label = "Month"
+                break
+
     # =========================================================================
-    # DISTRIBUTOR COMPARISON (supports per-period slicing)
+    # DISTRIBUTOR COMPARISON
     # =========================================================================
     if entities and entity_type == "distributor":
         entity_col = mapping.get("distributor")
         if not entity_col or entity_col not in base_df.columns:
             return None, float("nan")
 
-        # Detect period mode from group_by
-        group_by = [str(x).lower() for x in (spec.get("group_by") or [])]
-        wants_quarter = any(x in ["quarter", "quarterly", "q"] for x in group_by)
-        wants_month = any(x in ["month", "monthly"] for x in group_by)
-
-        period_col = None
-        period_label = None
-
-        if wants_quarter:
-            for cand in ["Quarter", "YearQuarter", mapping.get("quarter")]:
-                if cand and cand in base_df.columns:
-                    period_col = cand
-                    period_label = "Quarter"
-                    break
-
-        elif wants_month:
-            for cand in ["Month", "YearMonth", mapping.get("month")]:
-                if cand and cand in base_df.columns:
-                    period_col = cand
-                    period_label = "Month"
-                    break
-
-        comparison_rows = []
+        rows = []
 
         for ent in entities:
-            ent_lower = str(ent).lower().strip()
-            mask = base_df[entity_col].astype(str).str.lower().str.contains(
-                ent_lower, case=False, na=False, regex=False
-            )
-            sub = base_df[mask]
+            mask = _contains_norm(base_df[entity_col], ent)
+            sub = base_df[mask].copy()
 
             if sub.empty:
+                # Include a zero row (so comparisons keep all entities)
+                if period_col:
+                    # If period slicing requested, still emit zero rows per period is ambiguous;
+                    # emit a single zero summary row for that distributor.
+                    rows.append(pd.DataFrame([{
+                        "Distributor": ent,
+                        "Total_mCi": 0,
+                        "Count": 0,
+                        "Average_mCi": 0,
+                    }]))
+                else:
+                    rows.append(pd.DataFrame([{
+                        "Distributor": ent,
+                        "Total_mCi": 0,
+                        "Count": 0,
+                        "Average_mCi": 0,
+                    }]))
                 continue
+
+            # Ensure numeric total column
+            sub[total_col] = pd.to_numeric(sub[total_col], errors="coerce").fillna(0.0)
 
             if period_col:
                 grouped = (
@@ -2079,36 +2139,36 @@ def _run_compare_aggregation(
                            Count=(total_col, "count"),
                        )
                 )
-                grouped["Average_mCi"] = grouped["Total_mCi"] / grouped["Count"]
+                grouped["Average_mCi"] = grouped["Total_mCi"] / grouped["Count"].replace(0, pd.NA)
                 grouped.insert(0, "Distributor", ent)
                 grouped = grouped.rename(columns={period_col: period_label})
-                comparison_rows.append(grouped)
 
+                # Clean formatting
+                grouped["Total_mCi"] = grouped["Total_mCi"].fillna(0).round(0).astype(int)
+                grouped["Count"] = grouped["Count"].fillna(0).astype(int)
+                grouped["Average_mCi"] = grouped["Average_mCi"].fillna(0).round(0).astype(int)
+
+                rows.append(grouped)
             else:
                 total_mci = float(sub[total_col].sum())
-                count = len(sub)
-                avg_mci = total_mci / count if count else 0
-                comparison_rows.append(pd.DataFrame([{
+                count = int(len(sub))
+                avg_mci = total_mci / count if count else 0.0
+                rows.append(pd.DataFrame([{
                     "Distributor": ent,
                     "Total_mCi": int(round(total_mci)),
                     "Count": count,
                     "Average_mCi": int(round(avg_mci)),
                 }]))
 
-        if not comparison_rows:
+        comparison_df = pd.concat(rows, ignore_index=True) if rows else None
+        if comparison_df is None or comparison_df.empty:
             return None, float("nan")
 
-        comparison_df = pd.concat(comparison_rows, ignore_index=True)
+        if period_label and period_label in comparison_df.columns:
+            comparison_df = comparison_df.sort_values(["Distributor", period_label], kind="stable")
 
-        # Sort nicely if period exists
-        if period_label:
-            comparison_df = comparison_df.sort_values(
-                ["Distributor", period_label]
-            )
-
-        total_mci = float(comparison_df["Total_mCi"].sum())
+        total_mci = float(pd.to_numeric(comparison_df["Total_mCi"], errors="coerce").fillna(0).sum())
         return comparison_df, total_mci
-
 
     # =========================================================================
     # PRODUCT COMPARISON
@@ -2167,11 +2227,12 @@ def _run_compare_aggregation(
             # Generic substring match
             return df[series.str.contains(label_lower, na=False, regex=False)]
 
-        # Build comparison
         comparison_data = []
+        tmp = base_df.copy()
+        tmp[total_col] = pd.to_numeric(tmp[total_col], errors="coerce").fillna(0.0)
 
         for ent in entities:
-            sub = _product_subset(base_df, ent)
+            sub = _product_subset(tmp, ent)
 
             if sub.empty:
                 comparison_data.append({
@@ -2189,7 +2250,7 @@ def _run_compare_aggregation(
             comparison_data.append({
                 "Product": ent.upper(),
                 "Total_mCi": int(round(total_mci)),
-                "Count": count,
+                "Count": int(count),
                 "Average_mCi": int(round(avg_mci))
             })
 
@@ -2202,7 +2263,7 @@ def _run_compare_aggregation(
         return None, float("nan")
 
     # =========================================================================
-    # CUSTOMER COMPARISON (similar to distributor)
+    # CUSTOMER COMPARISON
     # =========================================================================
     if entities and entity_type == "customer":
         entity_col = mapping.get("customer")
@@ -2214,37 +2275,36 @@ def _run_compare_aggregation(
             print(f"  ❌ ERROR: entity_col '{entity_col}' not in base_df.columns")
             return None, float("nan")
 
-        comparison_data = []
+        rows = []
+        tmp = base_df.copy()
+        tmp[total_col] = pd.to_numeric(tmp[total_col], errors="coerce").fillna(0.0)
 
         for ent in entities:
-            ent_lower = str(ent).lower().strip()
+            mask = _contains_norm(tmp[entity_col], ent)
+            sub = tmp[mask]
 
-            mask = base_df[entity_col].astype(str).str.lower().str.contains(
-                ent_lower, case=False, na=False, regex=False
-            )
-            sub = base_df[mask]
-
-            if len(sub) > 0:
-                total_mci = float(sub[total_col].sum())
-                count = len(sub)
-                avg_mci = total_mci / count if count > 0 else 0
-
-                comparison_data.append({
-                    "Customer": ent,
-                    "Total_mCi": int(round(total_mci)),
-                    "Count": count,
-                    "Average_mCi": int(round(avg_mci))
-                })
-            else:
-                comparison_data.append({
+            if sub.empty:
+                rows.append({
                     "Customer": ent,
                     "Total_mCi": 0,
                     "Count": 0,
                     "Average_mCi": 0
                 })
+                continue
 
-        if comparison_data:
-            comparison_df = pd.DataFrame(comparison_data)
+            total_mci = float(sub[total_col].sum())
+            count = int(len(sub))
+            avg_mci = total_mci / count if count else 0.0
+
+            rows.append({
+                "Customer": ent,
+                "Total_mCi": int(round(total_mci)),
+                "Count": count,
+                "Average_mCi": int(round(avg_mci))
+            })
+
+        if rows:
+            comparison_df = pd.DataFrame(rows)
             total_mci = float(comparison_df["Total_mCi"].sum())
             print(f"[COMPARE-CUST] ✅ Complete! Total: {total_mci:.0f}")
             return comparison_df, total_mci
@@ -2252,20 +2312,28 @@ def _run_compare_aggregation(
         return None, float("nan")
 
     # =========================================================================
-    # FALLBACK: Simple grouping if no entity type matched
+    # FALLBACK: safe grouping (avoid undefined group_cols)
     # =========================================================================
     print(f"[COMPARE] No specific entity type matched, falling back to grouping")
 
+    group_cols = spec.get("group_cols") or spec.get("group_by_cols") or []
+    if not isinstance(group_cols, list):
+        group_cols = []
+
     if not group_cols:
-        total_mci = float(base_df[total_col].sum())
+        total_mci = float(pd.to_numeric(base_df[total_col], errors="coerce").fillna(0.0).sum())
         return None, total_mci
 
-    grouped_df = base_df.groupby(group_cols, as_index=False)[total_col].sum()
+    tmp = base_df.copy()
+    tmp[total_col] = pd.to_numeric(tmp[total_col], errors="coerce").fillna(0.0)
+
+    grouped_df = tmp.groupby(group_cols, as_index=False)[total_col].sum()
     grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
     total_mci = float(grouped_df[total_col].sum())
 
     print(f"[COMPARE] Fallback grouping: shape={grouped_df.shape}, total={total_mci:.0f}")
     return grouped_df, total_mci
+
 
 # ===========================================================================
 # HELPER: TOP N AGGREGATION
