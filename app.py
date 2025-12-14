@@ -495,6 +495,8 @@ def main():
                 user_text,
                 df,
                 history=st.session_state.messages,
+                proj_df=st.session_state.get("proj_df"),
+                meta_df=st.session_state.get("meta_df"),
             )
         except Exception as e:
             raw_answer = f"An error occurred: {e}"
