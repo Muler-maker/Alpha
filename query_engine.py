@@ -1323,10 +1323,54 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
         dist_val = filters["distributor"]
         col = mapping["distributor"]
 
+def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
+    """Apply all filters from the spec to the DataFrame."""
+    if df is None or not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+
+    mapping = _get_mapping(df)
+    filters = spec.get("filters", {}) or {}
+    
+    # SAFETY: Ensure all filter values are properly typed
+    if filters is None:
+        filters = {}
+        spec["filters"] = filters
+    
+    result = df.copy()
+
+    def contains(df: pd.DataFrame, col: str, value) -> pd.Series:
+        """
+        Accent-insensitive, case-insensitive containment match
+        """
+        if col not in df.columns:
+            return pd.Series([False] * len(df), index=df.index)
+
+        needle = _normalize_text(value)
+        haystack = df[col].astype(str).apply(_normalize_text)
+
+        return haystack.str.contains(needle, na=False, regex=False)
+
+    # Customer
+    if filters.get("customer") and mapping.get("customer"):
+        col = mapping["customer"]  # FIX: Get the actual column name
+        result = result[contains(result, col, filters["customer"])]  # ✅ Pass result, col, value
+
+    # --- NEW PROTECTION: avoid broken multi-entity distributor filters ---
+    dist_val = filters.get("distributor")
+    if isinstance(dist_val, str):
+        lv = dist_val.lower()
+        if (" vs " in lv or " and " in lv) and "dsd" in lv and "pi medical" in lv:
+            print(f"🧹 Dropping multi-entity distributor filter: '{dist_val}'")
+            filters["distributor"] = None
+
+    # Distributor (supports single value, list, or stringified list)
+    if filters.get("distributor") and mapping.get("distributor"):
+        col = mapping["distributor"]
+
         def _apply_multi_distributor(values):
             mask = None
             for v in values:
-                cur = contains(col, v)  # <-- uses your helper
+                cur = contains(result, col, v)  # ✅ Pass result, col, value
                 mask = cur if mask is None else (mask | cur)
             return result[mask] if mask is not None else result.iloc[0:0]
 
@@ -1351,12 +1395,11 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
                 result = _apply_multi_distributor(parsed_list)
             else:
                 # Single distributor string
-                result = result[contains(col, text)]  # <-- uses your helper
+                result = result[contains(result, col, text)]  # ✅ Pass result, col, value
 
         # Case 3: Any other type -> treat as single value safely
         else:
-            result = result[contains(col, dist_val)]  # <-- uses your helper
-
+            result = result[contains(result, col, dist_val)]  # ✅ Pass result, col, value
 
     # Year
     if filters.get("year") and mapping.get("year"):
@@ -1393,15 +1436,18 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
 
     # Country
     if filters.get("country") and mapping.get("country"):
-        result = result[contains(mapping["country"], filters["country"])]
+        col = mapping["country"]
+        result = result[contains(result, col, filters["country"])]  # ✅ Pass result, col, value
 
     # Region
     if filters.get("region") and mapping.get("region"):
-        result = result[contains(mapping["region"], filters["region"])]
+        col = mapping["region"]
+        result = result[contains(result, col, filters["region"])]  # ✅ Pass result, col, value
 
     # Production site
     if filters.get("production_site") and mapping.get("production_site"):
-        result = result[contains(mapping["production_site"], filters["production_site"])]
+        col = mapping["production_site"]
+        result = result[contains(result, col, filters["production_site"])]  # ✅ Pass result, col, value
 
     # --- Product filters (NCA / CA / Terbium aware) ---
 
