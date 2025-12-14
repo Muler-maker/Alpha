@@ -3884,12 +3884,17 @@ def answer_question_from_df(user_text, df, history=None, proj_df=None, meta_df=N
     print(f"  customer: {spec.get('filters', {}).get('customer')}")
     print(f"  distributor: {spec.get('filters', {}).get('distributor')}")
 
-    spec = _inject_customer_from_question(consolidated_df, spec)
+    # CRITICAL: Detect "all customers" / "all distributors" FIRST
+    # This must run BEFORE _inject_customer_from_question
+    spec = _detect_all_entities_pattern(question, spec)
+    
+    # Only inject customer if we're NOT doing an "all entities" query
+    if not spec.get("_all_entities_detected"):
+        spec = _inject_customer_from_question(consolidated_df, spec)
+    
     spec = _normalize_entity_filters(consolidated_df, spec)
     spec = _disambiguate_customer_vs_distributor(consolidated_df, spec)
-    spec = _detect_all_entities_pattern(question, spec)  # ✅ ADD THIS LINE
     spec = _normalize_product_filters(spec, question)
-
     print(f"\n[ENTITY] After entity processing:")
     print(f"  customer: {spec.get('filters', {}).get('customer')}")
     print(f"  distributor: {spec.get('filters', {}).get('distributor')}")
