@@ -2469,26 +2469,69 @@ def _run_growth_rate_aggregation(
     elif wants_quarter:
         period_mode = "quarter"
 
-    # Derive period columns if needed
-    if period_mode in ["month", "quarter"]:
-        if not year_col or year_col not in df.columns or not week_col or week_col not in df.columns:
-            # Cannot derive month/quarter without year+week
-            return None, float("nan")
-        df = _ensure_period_columns(df, year_col=year_col, week_col=week_col)
+    # ---------------------------------------------------------------------
+    # Prefer explicit Month/Quarter columns if they already exist in df
+    # ---------------------------------------------------------------------
+    quarter_col = None
+    for cand in ["Quarter", "quarter", mapping.get("quarter"), "YearQuarter"]:
+        if cand and cand in df.columns:
+            quarter_col = cand
+            break
 
-    # Choose the period column
+    month_col = None
+    for cand in ["Month", "month", mapping.get("month"), "YearMonth"]:
+        if cand and cand in df.columns:
+            month_col = cand
+            break
+
+    # Choose the period column (prefer explicit columns, fallback to deriving)
     if period_mode == "week":
-        # Use explicit group col if provided; else default to week column
         period_col = group_cols[0] if group_cols else week_col
         if not period_col or period_col not in df.columns:
             return None, float("nan")
         period_label = "Week"
+
     elif period_mode == "month":
-        period_col = "YearMonth"
-        period_label = "Month"
+        if month_col:
+            period_col = month_col
+            period_label = "Month"
+        else:
+            if not year_col or year_col not in df.columns or not week_col or week_col not in df.columns:
+                return None, float("nan")
+            df = _ensure_period_columns(df, year_col=year_col, week_col=week_col)
+            period_col = "YearMonth"
+            period_label = "Month"
+
     else:  # quarter
-        period_col = "YearQuarter"
-        period_label = "Quarter"
+        if quarter_col:
+            period_col = quarter_col
+            period_label = "Quarter"
+
+            # If Quarter is "Q1/Q2/..." (no year), prefix with Year → "YYYY-Qn"
+            if df[period_col].dtype == object:
+                sample = (
+                    df[period_col]
+                    .dropna()
+                    .astype(str)
+                    .head(20)
+                    .tolist()
+                )
+                looks_like_q_only = (
+                    any(s.strip().upper().startswith("Q") for s in sample)
+                    and not any("-" in s for s in sample)
+                )
+                if looks_like_q_only and year_col and year_col in df.columns:
+                    df[period_col] = (
+                        df[year_col].astype(str)
+                        + "-"
+                        + df[period_col].astype(str).str.upper().str.strip()
+                    )
+        else:
+            if not year_col or year_col not in df.columns or not week_col or week_col not in df.columns:
+                return None, float("nan")
+            df = _ensure_period_columns(df, year_col=year_col, week_col=week_col)
+            period_col = "YearQuarter"
+            period_label = "Quarter"
 
     # Aggregate
     series = (
