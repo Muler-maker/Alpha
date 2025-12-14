@@ -3773,8 +3773,7 @@ def _pivot_growth_by_entity(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFr
 # ============================================
 # MAIN ENTRYPOINT
 # ============================================
-def answer_question_from_df(user_text, df, history=None, proj_df=None, meta_df=None):
- -> str:
+def answer_question_from_df(user_text, df, history=None, proj_df=None, meta_df=None) -> str:
     """Main function to interpret, execute, and answer a question from the DataFrame."""
     if consolidated_df is None or consolidated_df.empty:
         return "The consolidated data is empty. Please load data first."
