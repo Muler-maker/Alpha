@@ -23,6 +23,33 @@ def _norm_key(series: pd.Series) -> pd.Series:
         .str.upper()
     )
 import datetime as _dt
+import unicodedata
+
+def _norm_text_no_accents(s: pd.Series) -> pd.Series:
+    """
+    Normalize text for robust matching:
+    - string
+    - strip
+    - collapse whitespace
+    - uppercase
+    - remove accents/diacritics (Comissão == Comissao)
+    """
+    s = (
+        s.astype(str)
+         .fillna("")
+         .str.strip()
+         .str.replace(r"\s+", " ", regex=True)
+         .str.upper()
+    )
+
+    def _strip_accents(x: str) -> str:
+        # Convert accented chars to base chars (ÇÃÓ -> CAO)
+        return "".join(
+            ch for ch in unicodedata.normalize("NFKD", x)
+            if not unicodedata.combining(ch)
+        )
+
+    return s.map(_strip_accents)
 
 def _iso_week_to_date(year: int, week: int, weekday: int = 1) -> _dt.date:
     """
