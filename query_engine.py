@@ -29,6 +29,15 @@ def _normalize_text(val) -> str:
     text = text.lower()
     text = re.sub(r"\s+", " ", text).strip()
     return text
+def contains_norm(series: pd.Series, needle: str) -> pd.Series:
+    """
+    Accent-insensitive, case-insensitive substring match.
+    Uses _normalize_text defined above.
+    """
+    s_norm = series.astype(str).apply(_normalize_text)
+    n_norm = _normalize_text(needle)
+    return s_norm.str.contains(n_norm, na=False, regex=False)
+
 
 def _norm_key(series: pd.Series) -> pd.Series:
     """
@@ -2263,7 +2272,7 @@ def _run_compare_aggregation(
         return None, float("nan")
 
     # =========================================================================
-    # CUSTOMER COMPARISON
+    # CUSTOMER COMPARISON (accent-insensitive, safe)
     # =========================================================================
     if entities and entity_type == "customer":
         entity_col = mapping.get("customer")
@@ -2275,9 +2284,10 @@ def _run_compare_aggregation(
             print(f"  ❌ ERROR: entity_col '{entity_col}' not in base_df.columns")
             return None, float("nan")
 
-        rows = []
         tmp = base_df.copy()
         tmp[total_col] = pd.to_numeric(tmp[total_col], errors="coerce").fillna(0.0)
+
+        rows = []
 
         for ent in entities:
             mask = _contains_norm(tmp[entity_col], ent)
@@ -2311,8 +2321,9 @@ def _run_compare_aggregation(
 
         return None, float("nan")
 
+
     # =========================================================================
-    # FALLBACK: safe grouping (avoid undefined group_cols)
+    # FALLBACK: safe grouping (no undefined variables)
     # =========================================================================
     print(f"[COMPARE] No specific entity type matched, falling back to grouping")
 
@@ -2320,12 +2331,12 @@ def _run_compare_aggregation(
     if not isinstance(group_cols, list):
         group_cols = []
 
-    if not group_cols:
-        total_mci = float(pd.to_numeric(base_df[total_col], errors="coerce").fillna(0.0).sum())
-        return None, total_mci
-
     tmp = base_df.copy()
     tmp[total_col] = pd.to_numeric(tmp[total_col], errors="coerce").fillna(0.0)
+
+    if not group_cols:
+        total_mci = float(tmp[total_col].sum())
+        return None, total_mci
 
     grouped_df = tmp.groupby(group_cols, as_index=False)[total_col].sum()
     grouped_df[total_col] = grouped_df[total_col].round(0).astype("int64")
@@ -2333,6 +2344,7 @@ def _run_compare_aggregation(
 
     print(f"[COMPARE] Fallback grouping: shape={grouped_df.shape}, total={total_mci:.0f}")
     return grouped_df, total_mci
+
 
 
 # ===========================================================================
