@@ -11,6 +11,18 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from tabulate import tabulate
 
+def _norm_key(series: pd.Series) -> pd.Series:
+    """
+    Normalize join keys to prevent mismatches due to casing/spacing.
+    """
+    return (
+        series.astype(str)
+        .fillna("")
+        .str.strip()
+        .str.replace(r"\s+", " ", regex=True)
+        .str.upper()
+    )
+
 
 # --- Environment & OpenAI client ---
 
@@ -2864,166 +2876,130 @@ def _run_projection_vs_actual_aggregation(
     total_col: str,
 ) -> Tuple[Optional[pd.DataFrame], float]:
     """
-    Execute PROJECTION_VS_ACTUAL aggregation.
-    
-    Compares projected amounts (from Proj_Amount column) vs actual amounts (Total_mCi).
-    Groups by Week by default, or whatever is in group_by.
-    
-    Returns a DataFrame with columns:
-      - [grouping column(s)] e.g., Week
-      - Actual (sum of Total_mCi)
-      - Projected (sum of Proj_Amount)
-      - Variance (Actual - Projected)
-      - Variance_% (percentage difference)
+    Compare weekly Actual vs Projected values.
+
+    IMPORTANT:
+    - base_df is ORDER-LEVEL
+    - Actual must be summed across orders
+    - Projected must NOT be summed across orders (otherwise it multiplies)
     """
+
+    print("\n[PROJECTION_VS_ACTUAL] START")
+
     group_by = spec.get("group_by") or []
-    
-    print(f"\n[PROJECTION_VS_ACTUAL]")
-    print(f"  base_df.shape: {base_df.shape}")
-    print(f"  base_df.columns: {list(base_df.columns)[:15]}")
-    print(f"  group_by: {group_by}")
-    
-    # Check for required columns
+
     actual_col = mapping.get("total_mci")
     proj_col = mapping.get("proj_mci")
-    
-    print(f"  actual_col from mapping: '{actual_col}'")
-    print(f"  proj_col from mapping: '{proj_col}'")
-    
+    week_col = mapping.get("week")
+
     if not actual_col or actual_col not in base_df.columns:
-        print(f"  ❌ ERROR: actual_col '{actual_col}' not in base_df.columns")
+        print("❌ Actual column missing")
         return None, float("nan")
-    
+
     if not proj_col or proj_col not in base_df.columns:
-        print(f"  ⚠️ WARNING: proj_col '{proj_col}' not in base_df.columns")
-        print(f"     Available columns: {list(base_df.columns)}")
-        # Fallback: return actuals only
-        if not group_by:
-            return None, float(base_df[actual_col].sum())
-        
-        # Group by whatever was specified
-        group_cols_filtered = [mapping.get(g) for g in group_by if mapping.get(g)]
-        if group_cols_filtered:
-            grouped = base_df.groupby(group_cols_filtered, as_index=False)[actual_col].sum()
-            grouped = grouped.rename(columns={actual_col: "Actual"})
-            return grouped, float(base_df[actual_col].sum())
-        else:
-            return None, float(base_df[actual_col].sum())
-    
-    # Check if projection column actually has non-zero data
-    proj_non_zero = (base_df[proj_col] > 0).sum()
-    print(f"  Projection column '{proj_col}' has {proj_non_zero} non-zero rows out of {len(base_df)}")
-    
-    if proj_non_zero == 0:
-        print(f"  ⚠️ WARNING: Projection column exists but is all zeros!")
-        print(f"    This likely means projections aren't available for this distributor/period")
-        print(f"    Returning actuals only")
-        
-        if not group_by:
-            return None, float(base_df[actual_col].sum())
-        
-        group_cols_filtered = [mapping.get(g) for g in group_by if mapping.get(g)]
-        if group_cols_filtered:
-            grouped = base_df.groupby(group_cols_filtered, as_index=False)[actual_col].sum()
-            grouped = grouped.rename(columns={actual_col: "Actual"})
-            return grouped, float(base_df[actual_col].sum())
-        else:
-            return None, float(base_df[actual_col].sum())
-    
-    # Ensure numeric columns
+        print("⚠️ Projection column missing – returning actuals only")
+        return None, float(base_df[actual_col].sum())
+
+    # ------------------------------------------------------------------
+    # Normalize numeric columns
+    # ------------------------------------------------------------------
     df = base_df.copy()
     df[actual_col] = pd.to_numeric(df[actual_col], errors="coerce").fillna(0.0)
-    df[proj_col] = pd.to_numeric(df[proj_col], errors="coerce").fillna(0.0)
-    
-    print(f"  Checking projection data in base_df:")
-    print(f"    base_df shape: {base_df.shape}")
-    print(f"    base_df columns: {list(base_df.columns)}")
-    print(f"    Proj_Amount in columns: {'Proj_Amount' in base_df.columns}")
-    if 'Proj_Amount' in base_df.columns:
-        non_zero_proj = (base_df['Proj_Amount'] > 0).sum()
-        null_proj = base_df['Proj_Amount'].isna().sum()
-        zero_proj = (base_df['Proj_Amount'] == 0).sum()
-        print(f"    Proj_Amount non-zero rows: {non_zero_proj}")
-        print(f"    Proj_Amount null rows: {null_proj}")
-        print(f"    Proj_Amount zero rows: {zero_proj}")
-        print(f"    Proj_Amount sample values: {base_df['Proj_Amount'].dropna().head(10).tolist()}")
-        print(f"    Proj_Amount sum: {base_df['Proj_Amount'].sum():.0f}")
-    print(f"    Total_mCi sum: {base_df[actual_col].sum():.0f}")
-    
+    df[proj_col] = pd.to_numeric(df[proj_col], errors="coerce")
+
+    # ------------------------------------------------------------------
     # Determine grouping columns
-    group_cols = [mapping.get(field) for field in group_by if mapping.get(field)]
-    
+    # ------------------------------------------------------------------
+    group_cols = [mapping.get(g) for g in group_by if mapping.get(g)]
     if not group_cols:
-        # Default: group by Week if available
-        week_col = mapping.get("week")
         if week_col and week_col in df.columns:
             group_cols = [week_col]
-            print(f"  ℹ️ No group_by specified, defaulting to Week")
         else:
-            # No week column, return scalar comparison
-            print(f"  ℹ️ No time dimension, returning scalar comparison")
+            # Scalar fallback
             actual_total = float(df[actual_col].sum())
-            proj_total = float(df[proj_col].sum())
+            proj_total = float(df[proj_col].dropna().unique().sum())
             variance = actual_total - proj_total
-            variance_pct = (variance / proj_total * 100.0) if proj_total != 0 else 0.0
-            
+            variance_pct = (variance / proj_total * 100.0) if proj_total else float("nan")
             summary = pd.DataFrame([{
                 "Actual": int(round(actual_total)),
                 "Projected": int(round(proj_total)),
                 "Variance": int(round(variance)),
-                "Variance_%": round(variance_pct, 1)
+                "Variance_%": round(variance_pct, 1),
             }])
             return summary, actual_total
-    
-    print(f"  group_cols: {group_cols}")
-    print(f"  Grouping by: {[c for c in group_cols]}")
-    
-    # Group by time/entity dimension and sum actuals and projections
-    grouped = df.groupby(group_cols, as_index=False).agg({
-        actual_col: "sum",
-        proj_col: "sum"
-    })
-    
-    print(f"  After groupby: shape={grouped.shape}")
-    print(f"  Grouped columns before rename: {list(grouped.columns)}")
-    
-    # Rename columns for clarity
-    grouped = grouped.rename(columns={
-        actual_col: "Actual",
-        proj_col: "Projected"
-    })
-    
-    print(f"  After rename: columns={list(grouped.columns)}")
-    
-    # Calculate variance and variance percentage
+
+    print(f"Grouping by: {group_cols}")
+
+    # ------------------------------------------------------------------
+    # ACTUALS: sum across all order rows
+    # ------------------------------------------------------------------
+    actuals = (
+        df.groupby(group_cols, as_index=False)[actual_col]
+          .sum()
+          .rename(columns={actual_col: "Actual"})
+    )
+
+    # ------------------------------------------------------------------
+    # PROJECTIONS: de-duplicate BEFORE aggregating
+    # ------------------------------------------------------------------
+    # Projection grain = group_cols + distributor/year/catalogue if present
+    dedupe_keys = list(group_cols)
+
+    for col in ["Year", "Distributor", "Catalogue description (sold as)"]:
+        if col in df.columns and col not in dedupe_keys:
+            dedupe_keys.append(col)
+
+    proj_unique = (
+        df[dedupe_keys + [proj_col]]
+        .dropna(subset=[proj_col])              # only rows where projection actually matched
+        .drop_duplicates(subset=dedupe_keys)    # CRITICAL: avoid multiplication
+    )
+
+    if proj_unique.empty:
+        print("⚠️ No matched projection rows after de-duplication")
+        proj_grouped = actuals.assign(Projected=0)
+    else:
+        proj_grouped = (
+            proj_unique.groupby(group_cols, as_index=False)[proj_col]
+                       .sum()
+                       .rename(columns={proj_col: "Projected"})
+        )
+
+    # ------------------------------------------------------------------
+    # Combine Actuals + Projections
+    # ------------------------------------------------------------------
+    grouped = actuals.merge(proj_grouped, on=group_cols, how="left")
+    grouped["Projected"] = grouped["Projected"].fillna(0.0)
+
+    # ------------------------------------------------------------------
+    # Variance calculations
+    # ------------------------------------------------------------------
     grouped["Variance"] = grouped["Actual"] - grouped["Projected"]
-    
-    # Handle division by zero: if Projected is 0, set Variance_% to null or special value
     grouped["Variance_%"] = grouped.apply(
-        lambda row: (
-            (row["Variance"] / row["Projected"] * 100.0) if row["Projected"] != 0 
-            else (float('nan') if row["Actual"] == 0 else float('inf'))
+        lambda r: (
+            (r["Variance"] / r["Projected"] * 100.0)
+            if r["Projected"] != 0
+            else (float("nan") if r["Actual"] == 0 else float("inf"))
         ),
         axis=1
     ).round(1)
-    
-    # Format numeric columns as integers (except percentages)
+
+    # ------------------------------------------------------------------
+    # Formatting
+    # ------------------------------------------------------------------
     for col in ["Actual", "Projected", "Variance"]:
         grouped[col] = grouped[col].round(0).astype(int)
-    
-    # Sort by first group column (usually Week)
-    if len(group_cols) > 0:
+
+    if group_cols:
         grouped = grouped.sort_values(group_cols)
-    
+
     total_actual = float(grouped["Actual"].sum())
-    
-    print(f"  ✅ Result shape: {grouped.shape}")
-    print(f"  Final columns: {list(grouped.columns)}")
-    print(f"  Total Actual: {total_actual:.0f}")
-    print(f"  First few rows:")
+
+    print("[PROJECTION_VS_ACTUAL] DONE")
     print(grouped.head(3))
-    
+
     return grouped, total_actual
+
 # ============================================================================
 # UPDATE ANSWER SECTION IN answer_question_from_df()
 # ============================================================================
