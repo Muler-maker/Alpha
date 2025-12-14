@@ -1283,6 +1283,7 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     # ----
 
     # âœ… FIXED Distributor Filter (supports single + multi-entity correctly)
+# Distributor (supports single value, list, or stringified list)
     if filters.get("distributor") and mapping.get("distributor"):
         dist_val = filters["distributor"]
         col = mapping["distributor"]
@@ -1290,15 +1291,15 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
         def _apply_multi_distributor(values):
             mask = None
             for v in values:
-                cur = result[col].astype(str).str.contains(str(v), case=False, na=False)
+                cur = contains(col, v)  # <-- uses your helper
                 mask = cur if mask is None else (mask | cur)
-            return result[mask]
+            return result[mask] if mask is not None else result.iloc[0:0]
 
-        # Case 1: Proper Python list â†' ["DSD", "PI Medical"]
+        # Case 1: Proper Python list -> ["DSD", "PI Medical"]
         if isinstance(dist_val, list):
             result = _apply_multi_distributor(dist_val)
 
-        # Case 2: String that LOOKS like a list â†' "['DSD', 'PI Medical']"
+        # Case 2: String that looks like a list -> "['DSD','PI Medical']"
         elif isinstance(dist_val, str):
             text = dist_val.strip()
 
@@ -1314,12 +1315,13 @@ def _apply_filters(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
             if parsed_list:
                 result = _apply_multi_distributor(parsed_list)
             else:
-                # Final fallback: single distributor string
-                result = result[result[col].astype(str).str.contains(text, case=False, na=False)]
+                # Single distributor string
+                result = result[contains(col, text)]  # <-- uses your helper
 
-        # Case 3: Any other type â†' treat as single value safely
+        # Case 3: Any other type -> treat as single value safely
         else:
-            result = result[result[col].astype(str).str.contains(str(dist_val), case=False, na=False)]
+            result = result[contains(col, dist_val)]  # <-- uses your helper
+
 
     # Year
     if filters.get("year") and mapping.get("year"):
