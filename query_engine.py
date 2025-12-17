@@ -3224,77 +3224,77 @@ def _run_projection_vs_actual_aggregation(
                 print(f"[PROJ_VS_ACT] After dropna(Year, week, dist): {len(p)} rows")
 
                 # -------------------------------------------------------------------------
-# -------------------------------------------------------------------------
-# Filter by target year (ROBUST: handles "2025" vs 2025 vs 2025.0)
-# -------------------------------------------------------------------------
-try:
-    target_year_int = int(pd.to_numeric(target_year, errors="coerce"))
-except Exception:
-    target_year_int = None
+        # -------------------------------------------------------------------------
+        # Filter by target year (ROBUST: handles "2025" vs 2025 vs 2025.0)
+        # -------------------------------------------------------------------------
+        try:
+            target_year_int = int(pd.to_numeric(target_year, errors="coerce"))
+        except Exception:
+            target_year_int = None
 
-if target_year_int is None:
-    print(f"[PROJ_VS_ACT] WARNING: target_year not numeric: {target_year!r} -> skipping year filter")
-    p_year = p.copy()
-else:
-    p_year = p[p["Year"].fillna(-999999).astype(int) == target_year_int]
-    print(f"[PROJ_VS_ACT] After filtering to year {target_year_int}: {len(p_year)} rows")
+        if target_year_int is None:
+            print(f"[PROJ_VS_ACT] WARNING: target_year not numeric: {target_year!r} -> skipping year filter")
+            p_year = p.copy()
+        else:
+            p_year = p[p["Year"].fillna(-999999).astype(int) == target_year_int]
+            print(f"[PROJ_VS_ACT] After filtering to year {target_year_int}: {len(p_year)} rows")
 
-# -------------------------------------------------------------------------
-# Filter by distributor (ROBUST: allow exact match, then fallback to contains)
-# -------------------------------------------------------------------------
-if not p_year.empty and target_distributor_norm and proj_dist_col:
-    p_year = p_year.copy()
-    p_year["_dist_norm"] = _norm_key(p_year[proj_dist_col])
+        # -------------------------------------------------------------------------
+        # Filter by distributor (ROBUST: allow exact match, then fallback to contains)
+        # -------------------------------------------------------------------------
+        if not p_year.empty and target_distributor_norm and proj_dist_col:
+            p_year = p_year.copy()
+            p_year["_dist_norm"] = _norm_key(p_year[proj_dist_col])
 
-    unique_dists = sorted(p_year["_dist_norm"].dropna().unique().tolist())
-    print(f"[PROJ_VS_ACT] Distributors in proj_df for {target_year_int}: {unique_dists}")
+            unique_dists = sorted(p_year["_dist_norm"].dropna().unique().tolist())
+            print(f"[PROJ_VS_ACT] Distributors in proj_df for {target_year_int}: {unique_dists}")
 
-    # 1) exact normalized match
-    p_exact = p_year[p_year["_dist_norm"] == target_distributor_norm]
+            # 1) exact normalized match
+            p_exact = p_year[p_year["_dist_norm"] == target_distributor_norm]
 
-    # 2) fallback: substring match
-    if p_exact.empty:
-        p_year = p_year[p_year["_dist_norm"].str.contains(target_distributor_norm, na=False)]
-        print(f"[PROJ_VS_ACT] Exact match empty -> using CONTAINS('{target_distributor_norm}'): {len(p_year)} rows")
-    else:
-        p_year = p_exact
-        print(f"[PROJ_VS_ACT] After filtering to distributor '{target_distributor_norm}': {len(p_year)} rows")
+            # 2) fallback: substring match
+            if p_exact.empty:
+                p_year = p_year[p_year["_dist_norm"].str.contains(target_distributor_norm, na=False)]
+                print(f"[PROJ_VS_ACT] Exact match empty -> using CONTAINS('{target_distributor_norm}'): {len(p_year)} rows")
+            else:
+                p_year = p_exact
+                print(f"[PROJ_VS_ACT] After filtering to distributor '{target_distributor_norm}': {len(p_year)} rows")
 
-elif p_year.empty:
-    print(f"[PROJ_VS_ACT] No rows after year filter (year={target_year_int})")
-elif not target_distributor_norm:
-    print(f"[PROJ_VS_ACT] No distributor filter requested")
-elif not proj_dist_col:
-    print(f"[PROJ_VS_ACT] WARNING: could not identify proj_dist_col")
+        elif p_year.empty:
+            print(f"[PROJ_VS_ACT] No rows after year filter (year={target_year_int})")
+        elif not target_distributor_norm:
+            print(f"[PROJ_VS_ACT] No distributor filter requested")
+        elif not proj_dist_col:
+            print(f"[PROJ_VS_ACT] WARNING: could not identify proj_dist_col")
 
-# -------------------------------------------------------------------------
-# Aggregate projections (only if we have rows and a proj amount col)
-# -------------------------------------------------------------------------
-proj_by_week = pd.DataFrame(columns=["Week", "Projected"])
-total_proj = 0.0
-projections_available = False
+        # -------------------------------------------------------------------------
+        # Aggregate projections (only if we have rows and a proj amount col)
+        # -------------------------------------------------------------------------
+        proj_by_week = pd.DataFrame(columns=["Week", "Projected"])
+        total_proj = 0.0
+        projections_available = False
 
-if not p_year.empty and proj_week_col and proj_amount_col:
-    proj_by_week = (
-        p_year.groupby(proj_week_col, as_index=False)[proj_amount_col]
-        .sum()
-        .rename(columns={proj_week_col: "Week", proj_amount_col: "Projected"})
-        .sort_values("Week")
-    )
-    total_proj = float(proj_by_week["Projected"].sum())
-    projections_available = total_proj > 0
-    print(f"[PROJ_VS_ACT] Projections aggregated: {len(proj_by_week)} weeks, total={total_proj:.0f}")
-else:
-    if p_year.empty:
-        print(f"[PROJ_VS_ACT] No projection rows available after filters")
-    if not proj_week_col:
-        print(f"[PROJ_VS_ACT] WARNING: could not identify proj_week_col")
-    if not proj_amount_col:
-        print(f"[PROJ_VS_ACT] WARNING: could not identify proj_amount_col")
+        if not p_year.empty and proj_week_col and proj_amount_col:
+            proj_by_week = (
+                p_year.groupby(proj_week_col, as_index=False)[proj_amount_col]
+                .sum()
+                .rename(columns={proj_week_col: "Week", proj_amount_col: "Projected"})
+                .sort_values("Week")
+            )
+            total_proj = float(proj_by_week["Projected"].sum())
+            projections_available = total_proj > 0
+            print(f"[PROJ_VS_ACT] Projections aggregated: {len(proj_by_week)} weeks, total={total_proj:.0f}")
+        else:
+            if p_year.empty:
+                print(f"[PROJ_VS_ACT] No projection rows available after filters")
+            if not proj_week_col:
+                print(f"[PROJ_VS_ACT] WARNING: could not identify proj_week_col")
+            if not proj_amount_col:
+                print(f"[PROJ_VS_ACT] WARNING: could not identify proj_amount_col")
 
-# Store availability flag
-spec["_projections_available"] = projections_available
-print(f"[PROJ_VS_ACT] projections_available={projections_available}")
+        # Store availability flag
+        spec["_projections_available"] = projections_available
+        print(f"[PROJ_VS_ACT] projections_available={projections_available}")
 
 
     # =========================================================================
