@@ -2027,6 +2027,101 @@ def _run_aggregation(
             total_col=total_col,
             proj_df=proj_df,     # <-- CRITICAL
         )
+    # =======================================================================
+    # PROJECTION-ONLY ROUTING (CRITICAL FIX)
+    # If the user asks for "projections/forecast/budget" (but NOT actuals / vs),
+    # do NOT sum Total_mCi. Instead, aggregate proj_df using Proj_Amount (or similar).
+    # =======================================================================
+    q_lower = str(spec.get("_question_text") or "").lower()
+
+    projection_kw = ["projection", "projections", "projected", "forecast", "forecasted", "budget", "budgeted", "plan", "planned"]
+    actual_kw = ["actual", "actuals", "realized", "delivered", "executed"]
+    compare_kw = ["vs", "versus", "compare", "compared to", "variance", "gap", "delta"]
+
+    wants_projection = any(k in q_lower for k in projection_kw)
+    wants_actual = any(k in q_lower for k in actual_kw)
+    wants_compare = any(k in q_lower for k in compare_kw)
+
+    # Projection-only intent: projections mentioned, no explicit actual/compare intent
+    if wants_projection and not wants_actual and not wants_compare:
+        if proj_df is None or not isinstance(proj_df, pd.DataFrame) or proj_df.empty:
+            # Fail loudly: do NOT fall back to actuals
+            spec["_projections_available"] = False
+            return None, float("nan")
+
+        p = proj_df.copy()
+
+        # --- find keys in proj_df ---
+        proj_dist_col = next((c for c in [
+            "Distributing company (from Company name)",
+            "Distributor",
+            "Distributing company",
+        ] if c in p.columns), None)
+
+        proj_week_col = next((c for c in ["Updated week number", "ProjWeek", "Week"] if c in p.columns), None)
+
+        if "Year" not in p.columns or proj_week_col is None:
+            spec["_projections_available"] = False
+            return None, float("nan")
+
+        # --- find amount column ---
+        preferred_amount_cols = [
+            "Amount", "mCi", "mCi projected", "Projected", "Projected mCi", "Projection", "Proj_Amount"
+        ]
+        proj_amount_col = next((c for c in preferred_amount_cols if c in p.columns), None)
+
+        if proj_amount_col is None:
+            # Fallback: pick best numeric column (excluding obvious keys)
+            key_like = {proj_dist_col, proj_week_col, "Year", "Catalogue description (sold as)"}
+            numeric_candidates = []
+            for c in p.columns:
+                if c in key_like:
+                    continue
+                s = pd.to_numeric(p[c], errors="coerce")
+                if s.notna().sum() > 0:
+                    numeric_candidates.append((c, float(s.fillna(0).abs().sum())))
+            proj_amount_col = sorted(numeric_candidates, key=lambda t: t[1], reverse=True)[0][0] if numeric_candidates else None
+
+        if proj_amount_col is None:
+            spec["_projections_available"] = False
+            return None, float("nan")
+
+        # --- normalize types ---
+        p["Year"] = pd.to_numeric(p["Year"], errors="coerce")
+        p[proj_week_col] = pd.to_numeric(p[proj_week_col], errors="coerce")
+        p[proj_amount_col] = pd.to_numeric(p[proj_amount_col], errors="coerce").fillna(0.0)
+
+        # --- apply Year filter from spec (required for your question patterns) ---
+        target_year = spec.get("filters", {}).get("year")
+        if target_year is not None:
+            try:
+                target_year = int(target_year)
+                p = p[p["Year"].fillna(-999999).astype(int) == target_year]
+            except Exception:
+                pass
+
+        # --- apply Distributor filter (DSD etc.) if present ---
+        target_distributor = spec.get("filters", {}).get("distributor")
+        if target_distributor and proj_dist_col:
+            target_norm = _norm_key(pd.Series([target_distributor])).iloc[0]
+            p_norm = _norm_key(p[proj_dist_col])
+            p = p[p_norm == target_norm]
+
+        # --- aggregate ---
+        grouped = (
+            p.dropna(subset=[proj_week_col])
+             .groupby(proj_week_col, as_index=False)[proj_amount_col]
+             .sum()
+             .rename(columns={proj_week_col: "Week", proj_amount_col: "Projected"})
+             .sort_values("Week")
+        )
+
+        spec["_projections_available"] = True
+
+        # Return in same shape your UI expects for "projections per week"
+        overall_value = float(grouped["Projected"].sum()) if not grouped.empty else 0.0
+        grouped["Projected"] = grouped["Projected"].round(0).astype(int)
+        return grouped, overall_value
 
     # =======================================================================
     # COMPARE MODE
