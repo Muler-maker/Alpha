@@ -603,12 +603,36 @@ ALWAYS:
         spec["aggregation"] = "projection_vs_actual"
 
     # GROWTH RATE DETECTION & COMPARISON PATTERNS
+    # NOTE: "last" and "previous" alone are too broad — they match "compared to last year"
+    # which should be sum_mci grouped by year, not growth_rate.
     growth_keywords = [
         "growth rate", "growth rates", "weekly growth", "week-over-week",
         "wow", "yoy", "year-over-year", "yearly growth", "growth per week",
-        "growth by week", "last", "previous"
+        "growth by week", "last n weeks", "previous n weeks"
     ]
-    
+
+    # YEAR COMPARISON DETECTION: "X in 2025 compared to 2026" or "2025 vs 2026"
+    # These should be sum_mci grouped by year, NOT growth_rate
+    year_comparison_pattern = re.search(
+        r"(20[2-3][0-9]).*(20[2-3][0-9])", q_lower
+    )
+    has_two_years = year_comparison_pattern is not None
+    has_compare_word = any(w in q_lower for w in ["compared to", "vs", "versus", "compare"])
+
+    if has_two_years and has_compare_word and not any(kw in q_lower for kw in ["growth", "growth rate", "wow", "yoy"]):
+        print(f"🔴 DETECTED: Year comparison (sum by year)")
+        spec["aggregation"] = "sum_mci"
+        gb = spec.get("group_by") or []
+        if "year" not in gb:
+            gb.insert(0, "year")
+        spec["group_by"] = gb
+        # Clear year filter so both years are included
+        filters = spec.get("filters") or {}
+        filters["year"] = None
+        spec["filters"] = filters
+        spec["_question_text"] = question
+        return spec
+
     if any(kw in q_lower for kw in growth_keywords):
         print(f"🔴 FORCING growth_rate aggregation (detected keywords)")
         spec["aggregation"] = "growth_rate"
@@ -4144,16 +4168,14 @@ def answer_question_from_df(user_text, df, history=None, proj_df=None, meta_df=N
             print(f"  Changed distributor filter from '{old_dist}' → None")
             print(f"  This allows BOTH distributors' data to be included")
 
-    # Growth rate: clear year filter to include all years
-    if spec.get("aggregation") == "growth_rate":
-        group_by = spec.get("group_by") or []
-        if "year" in group_by:
-            filters_f = spec_for_filtering.get("filters") or {}
-            year_filter = filters_f.get("year")
-            if year_filter:
-                print(f"[YoY] Clearing year filter to include all years")
-                filters_f["year"] = None
-                spec_for_filtering["filters"] = filters_f
+    # Clear year filter when grouping by year (so all years are included)
+    group_by_now = spec.get("group_by") or []
+    if "year" in group_by_now and spec.get("aggregation") in ("growth_rate", "sum_mci"):
+        filters_f = spec_for_filtering.get("filters") or {}
+        if filters_f.get("year"):
+            print(f"[YEAR_GROUP] Clearing year filter so all years are included in group_by")
+            filters_f["year"] = None
+            spec_for_filtering["filters"] = filters_f
 
     df_filtered = _apply_filters(consolidated_df, spec_for_filtering)
 
