@@ -121,10 +121,13 @@ def _ensure_period_columns(df: pd.DataFrame, year_col: str, week_col: str) -> pd
 
 load_dotenv()
 
-OPENAI_API_KEY = (
-    os.getenv("OPENAI_API_KEY")
-    or st.secrets.get("OPENAI_API_KEY")   # ← read from Streamlit secrets too
-)
+# Safely read API key from env or Streamlit secrets
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    try:
+        OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+    except Exception:
+        OPENAI_API_KEY = None
 
 OPENAI_MODEL_NAME = os.getenv("OPENAI_MODEL_NAME", "gpt-4.1-mini")
 
@@ -413,27 +416,13 @@ SHIPPING STATUS LOGIC
 
 GROUP BY LOGIC
 Set group_by for breakdowns:
-- "per year" or "by year" or "yearly" → ["year"]
-- "per country" or "by country" → ["country"]
-- "per distributor" or "by distributor" → ["distributor"]
-- "per customer" or "by customer" → ["customer"]
-- "per week" or "by week" or "weekly" or "week by week" or "each week" → ["week"]
-- "weekly breakdown" → ["year", "week"]
+- "per year" → ["year"]
+- "per country" → ["country"]
+- "per distributor" → ["distributor"]
+- "per customer" → ["customer"]
+- "per week" or "by week" or "weekly" → ["week"]
+- "weekly breakdown" → ["week"] or ["year", "week"]
 - Multiple dimensions allowed: ["customer", "year"], ["distributor", "product_sold"]
-
-CRITICAL GROUP BY RULES:
-- If the question contains "per week", "by week", "each week", or "weekly", you MUST set group_by to ["week"]. Never return an empty group_by for these phrasings.
-- If the question contains "per distributor", "by distributor", or "each distributor", you MUST set group_by to ["distributor"].
-- If the question contains "per customer", "by customer", or "each customer", you MUST set group_by to ["customer"].
-- If the question contains "per country" or "by country", you MUST set group_by to ["country"].
-- If the question contains "per year" or "by year", you MUST set group_by to ["year"].
-
-EXAMPLES:
-- "What did DSD order per week in 2026?" → aggregation: "sum_mci", group_by: ["week"], filters: {year: 2026, distributor: "dsd"}
-- "Show me weekly orders for 2025" → aggregation: "sum_mci", group_by: ["week"], filters: {year: 2025}
-- "What did each customer order in 2025?" → aggregation: "sum_mci", group_by: ["customer"], filters: {year: 2025}
-- "Orders per distributor in Q1 2025" → aggregation: "sum_mci", group_by: ["distributor"], filters: {year: 2025, quarter: "Q1"}
-- "Total orders by country" → aggregation: "sum_mci", group_by: ["country"]
 
 ALWAYS:
 - If unsure, leave a filter as null.
@@ -4556,7 +4545,15 @@ def answer_question_from_df(user_text, df, history=None, proj_df=None, meta_df=N
     if chart_block:
         final_answer += "\n\n" + chart_block
 
-    return final_answer
+    # ------------------------------------------------------------------
+    # 8) Optional refinement pass
+    # ------------------------------------------------------------------
+    try:
+        refined_answer = _refine_answer_text(client, final_answer, question)
+    except Exception:
+        refined_answer = final_answer
+
+    return refined_answer
 
 # -------------------------
 # Dynamic week window logic
