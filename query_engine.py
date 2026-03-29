@@ -121,13 +121,10 @@ def _ensure_period_columns(df: pd.DataFrame, year_col: str, week_col: str) -> pd
 
 load_dotenv()
 
-# Safely read API key from env or Streamlit secrets
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    try:
-        OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
-    except Exception:
-        OPENAI_API_KEY = None
+OPENAI_API_KEY = (
+    os.getenv("OPENAI_API_KEY")
+    or st.secrets.get("OPENAI_API_KEY")   # ← read from Streamlit secrets too
+)
 
 OPENAI_MODEL_NAME = os.getenv("OPENAI_MODEL_NAME", "gpt-4.1-mini")
 
@@ -415,14 +412,45 @@ SHIPPING STATUS LOGIC
 - "explicit": specific statuses listed by user
 
 GROUP BY LOGIC
-Set group_by for breakdowns:
-- "per year" → ["year"]
-- "per country" → ["country"]
-- "per distributor" → ["distributor"]
-- "per customer" → ["customer"]
-- "per week" or "by week" or "weekly" → ["week"]
-- "weekly breakdown" → ["week"] or ["year", "week"]
-- Multiple dimensions allowed: ["customer", "year"], ["distributor", "product_sold"]
+Set group_by to reflect EVERY dimension the user asks for. Multiple dimensions are common.
+
+SINGLE DIMENSION RULES:
+- "per year" or "by year" or "yearly" → include "year"
+- "per quarter" or "by quarter" or "quarterly" → include "quarter"
+- "per month" or "by month" or "monthly" → include "month"
+- "per week" or "by week" or "weekly" or "each week" → include "week"
+- "per distributor" or "by distributor" → include "distributor"
+- "per customer" or "by customer" → include "customer"
+- "per country" or "by country" → include "country"
+- "per region" or "by region" → include "region"
+- "per product" or "by product" → include "product_sold"
+
+MULTI-DIMENSION RULES (CRITICAL):
+- "per quarter per year" or "by quarter by year" → ["year", "quarter"]
+- "per week per year" or "by week by year" → ["year", "week"]
+- "per month per year" → ["year", "month"]
+- "per week in 2026" → ["week"] with filters.year = 2026
+- "per quarter in 2025" → ["quarter"] with filters.year = 2025
+- Always include ALL dimensions the user mentions
+
+CRITICAL GROUP BY RULES:
+- If the question contains "per week", "by week", "each week", or "weekly" → MUST include "week" in group_by
+- If the question contains "per quarter" or "quarterly" → MUST include "quarter" in group_by
+- If the question contains "per month" or "monthly" → MUST include "month" in group_by
+- If the question contains "per year" or "yearly" → MUST include "year" in group_by
+- Never return empty group_by when any of the above keywords are present
+
+EXAMPLES:
+- "What did DSD order per week in 2026?" → group_by: ["week"], filters: {year: 2026, distributor: "dsd"}
+- "Show me weekly orders for 2025" → group_by: ["week"], filters: {year: 2025}
+- "Compare customer X amounts per quarter per year" → group_by: ["year", "quarter"], filters: {customer: "X"}
+- "Compare customer X amounts per week in 2026" → group_by: ["week"], filters: {year: 2026, customer: "X"}
+- "Orders per distributor per year" → group_by: ["year", "distributor"]
+- "Monthly breakdown by country in 2025" → group_by: ["month"], filters: {year: 2025, country: null}, group_by: ["country", "month"]
+- "Quarterly totals per distributor" → group_by: ["distributor", "quarter"]
+- "What did each customer order in 2025?" → group_by: ["customer"], filters: {year: 2025}
+- "Total orders by country" → group_by: ["country"]
+- "Weekly growth per distributor" → aggregation: "growth_rate", group_by: ["distributor", "week"]
 
 ALWAYS:
 - If unsure, leave a filter as null.
@@ -4128,6 +4156,16 @@ def answer_question_from_df(user_text, df, history=None, proj_df=None, meta_df=N
                 spec_for_filtering["filters"] = filters_f
 
     df_filtered = _apply_filters(consolidated_df, spec_for_filtering)
+
+    # ------------------------------------------------------------------
+    # 2b) Ensure period columns exist for quarter/month group_by requests
+    # ------------------------------------------------------------------
+    group_by_check = spec.get("group_by") or []
+    needs_period_cols = any(g in group_by_check for g in ["quarter", "month"])
+    if needs_period_cols and "Year" in df_filtered.columns and "Week" in df_filtered.columns:
+        if "Quarter" not in df_filtered.columns or "Month" not in df_filtered.columns:
+            print(f"[PERIOD] Adding Quarter/Month columns for group_by: {group_by_check}")
+            df_filtered = _ensure_period_columns(df_filtered, year_col="Year", week_col="Week")
 
     print(f"\n[FILTER] After filtering:")
     print(f"  rows returned: {len(df_filtered) if df_filtered is not None else 0}")
