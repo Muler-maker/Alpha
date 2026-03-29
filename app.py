@@ -519,53 +519,15 @@ def main():
                 proj_df=st.session_state.proj_df,
                 meta_df=st.session_state.meta_df,
             )
+            # TEMP DEBUG - remove after testing
+            from query_engine import _interpret_question_with_llm
+            debug_spec = _interpret_question_with_llm(user_text)
+            st.write("🔍 DEBUG SPEC:", debug_spec)
         except Exception as e:
             raw_answer = f"An error occurred: {e}"
 
-        # ---------------------------------
-        # ✨ OPTIONAL GPT REFINEMENT LAYER
-        # ---------------------------------
-        refined_answer = raw_answer
-
-        if client is not None:
-            try:
-                answer_without_charts = strip_chart_blocks(raw_answer)
-
-                # If there's a markdown table, preserve exactly (no rewriting)
-                has_table = ("|" in answer_without_charts) and ("---" in answer_without_charts)
-
-                if has_table:
-                    refined_answer = answer_without_charts
-                else:
-                    prompt_refine = f"""
-You are Alpha, a senior data analyst.
-
-Refine the text below so that it:
-- sounds natural and non-robotic
-- preserves ALL numbers exactly
-- keeps markdown formatting
-- does NOT add or infer new data
-- keeps the structure clear and concise
-
-Text:
----
-{answer_without_charts}
----
-"""
-                    response = client.chat.completions.create(
-                        model="gpt-4.1-mini",
-                        messages=[
-                            {"role": "system", "content": "You refine analytical outputs for business users."},
-                            {"role": "user", "content": prompt_refine},
-                        ],
-                        temperature=0.2,
-                    )
-                    refined_answer = response.choices[0].message.content.strip()
-
-            except Exception:
-                refined_answer = strip_chart_blocks(raw_answer)
-
-        cleaned = refined_answer
+        # Strip chart blocks for display (no second GPT refinement pass)
+        cleaned = strip_chart_blocks(raw_answer)
 
         # Store assistant message with BOTH:
         # - content (refined text for chat)
